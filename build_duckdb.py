@@ -119,8 +119,6 @@ TABLES = [
             week INTEGER,
             week_theme_id INTEGER REFERENCES week_themes,
             couple_id INTEGER REFERENCES couples,
-            professional_id INTEGER REFERENCES professionals,
-            celebrity_id INTEGER REFERENCES celebrities,
             primary_dance_style_id INTEGER REFERENCES primary_dance_styles,
             primary_song_id INTEGER REFERENCES primary_songs
         )

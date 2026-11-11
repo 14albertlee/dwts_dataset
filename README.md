@@ -10,7 +10,7 @@ The database can be understood as:
 
 The dataset currently covers seasons 1 through 35.
 
-`couples` links a `couple` to its `celebrity_id` and `professional_id`. `performances` links a performance to its `couple_id`, `celebrity_id`, and `primary_song_id` (in addition to `primary_dance_style_id`, `week_theme_id`, and `professional_id`) so you don't need to re-derive those joins yourself.
+`couples` links a `couple` to its `celebrity_id` and `professional_id`. `performances` links a performance to its `couple_id` (in addition to `primary_dance_style_id`, `week_theme_id`, and `primary_song_id`). `performances` does not carry its own `celebrity_id`/`professional_id`; join through `couples` to get those, since `couple_id` already implies both.
 
 Currently performances by multiple couples at the same time are dropped. This removes the complication of different kinds of judgements, including judgements in which the judges rank the couples (rather than giving scores out of 10).
 

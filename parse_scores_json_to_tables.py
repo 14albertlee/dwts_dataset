@@ -207,12 +207,19 @@ def build_dimension_tables(df_final, pluralizer):
     tables (couples, performances) can use it as a foreign key."""
     # judges, celebrities and professionals all in different tables, although
     # they are all people and people do migrate between roles.
-    for dim in ['couple', 'primary_dance_style', 'week_theme', 'judge', 'professional', 'primary_song_artist']:
+    #
+    # Note: 'couple' is deliberately excluded from this generic loop. The
+    # scraped 'couple' column is just a display label (e.g. "Chris &
+    # Witney"), and the same label text recurs across seasons whenever a
+    # different celebrity happens to share a first name with a previous one
+    # partnered with the same pro (e.g. Chris Soules / Chris Kattan / Chris
+    # Mazdzer, all "Chris & Witney"). Factorizing couple_id straight off that
+    # text would incorrectly merge those distinct celebrity/pro pairs into
+    # one couple_id. Instead couple_id is derived below from the actual
+    # (celebrity_id, professional_id) pair once both ids exist.
+    for dim in ['primary_dance_style', 'week_theme', 'judge', 'professional', 'primary_song_artist']:
         df_final[dim + "_id"] = df_final[dim].factorize()[0] + 1
-        if dim != 'couple':
-            # couples.csv is written separately below, with celebrity_id and
-            # professional_id foreign keys added.
-            write_csv(df_final[[dim + "_id", dim]].drop_duplicates(), dim, pluralizer)
+        write_csv(df_final[[dim + "_id", dim]].drop_duplicates(), dim, pluralizer)
 
     # celebrity needs known_for (notability)
     df_final['celebrity_id'] = df_final.celebrity.factorize()[0] + 1
@@ -220,6 +227,14 @@ def build_dimension_tables(df_final, pluralizer):
         df_final.filter(['celebrity_id', "celebrity", 'notability'], axis='columns')
                 .drop_duplicates(subset=['celebrity_id', 'celebrity']),
         'celebrity', pluralizer,
+    )
+
+    # couple_id is keyed off the real (celebrity_id, professional_id) pair,
+    # not the display label text (see note above).
+    df_final['couple_id'] = (
+        df_final[['celebrity_id', 'professional_id']]
+        .apply(tuple, axis=1)
+        .factorize()[0] + 1
     )
 
     # song needs primary_artist
@@ -246,11 +261,14 @@ def write_couples_table(df_final, pluralizer):
 
 
 def write_performances_table(df_final):
+    # celebrity_id/professional_id are deliberately left off: couple_id
+    # already implies both (via couples.celebrity_id/professional_id), so
+    # carrying them here too would just be redundant, denormalized copies
+    # that could drift out of sync with the couples table.
     (
         df_final
         .filter(['performance_id', 'season', 'week', 'week_theme_id',
-                 'couple_id', 'professional_id', 'celebrity_id',
-                 'primary_dance_style_id', 'primary_song_id'], axis='columns')
+                 'couple_id', 'primary_dance_style_id', 'primary_song_id'], axis='columns')
         .drop_duplicates()
         .to_csv(os.path.join(OUTPUT_DIR, "performances.csv"), index=False, quoting=csv.QUOTE_NONNUMERIC)
     )
