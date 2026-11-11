@@ -1,6 +1,9 @@
-scrapy
-pyjanitor
-pip-install-test
-html5lib
-nameparser
-pluralizer
+scrapy==2.20.0
+pyjanitor==0.32.77
+html5lib==1.1
+nameparser==2.8.2
+pluralizer==2.0.0
+pandas==3.1.1
+numpy==2.3.3
+lxml==6.1.3
+
