@@ -79,7 +79,10 @@ class DwtsScoresSpider(CrawlSpider):
         cast_table = cast_section.xpath('../following-sibling::table[1]')
         
         cast_pandas = ( 
-            pd.read_html(io.StringIO(cast_table.get().replace('<br>','---')))[0].fillna('') # read_html returns list of tables
+            # Wikipedia sometimes renders <br> with attributes (e.g. <br id="...">
+            # on Parsoid-generated pages), so match any <br ...> variant rather
+            # than only the bare tag.
+            pd.read_html(io.StringIO(re.sub(r'<br[^>]*>', '---', cast_table.get())))[0].fillna('') # read_html returns list of tables
               .rename(columns=lambda x: re.sub(r'\[.*?\]','',x)) # remove footnote refs from column headers.
               .clean_names()
         )
@@ -259,7 +262,7 @@ class DwtsScoresSpider(CrawlSpider):
                             judge_sentence = p_text
                         
                 raw_table = (
-                    pd.read_html(io.StringIO(tag.get().replace('<br>','---')))[0].fillna('') # read_html returns list of tables
+                    pd.read_html(io.StringIO(re.sub(r'<br[^>]*>', '---', tag.get())))[0].fillna('') # read_html returns list of tables
                         # remove footnote refs from column headers.
                     .rename(columns=lambda x: re.sub(r'\[.*?\]','',x))
                     .clean_names()
