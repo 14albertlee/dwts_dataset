@@ -6,10 +6,12 @@ Run from the repository root (after regenerating the csvs with
     python build_duckdb.py
 
 This (re)creates `dwts_dataset.duckdb` at the repo root, with one table per
-csv, primary keys on every `<table>_id` column, and foreign keys wired up
+csv, primary keys on every `<table>_id` column, foreign keys wired up
 between the fact tables (`couples`, `performances`, `scores`) and their
-dimension tables, so you get join validation and can query the dataset
-directly with SQL, e.g.:
+dimension tables, and unique constraints on each dimension table's natural
+key (e.g. `celebrities.celebrity`, `couples.(celebrity_id, professional_id)`),
+so loading it also double-checks that the csvs have no duplicate dimension
+rows, and you can query the dataset directly with SQL, e.g.:
 
     duckdb dwts_dataset.duckdb -c "
         SELECT c.celebrity, p.professional, avg(s.judge_score) AS avg_score
@@ -39,7 +41,7 @@ TABLES = [
         """
         CREATE TABLE celebrities (
             celebrity_id INTEGER PRIMARY KEY,
-            celebrity VARCHAR,
+            celebrity VARCHAR UNIQUE,
             notability VARCHAR
         )
         """,
@@ -49,7 +51,7 @@ TABLES = [
         """
         CREATE TABLE professionals (
             professional_id INTEGER PRIMARY KEY,
-            professional VARCHAR
+            professional VARCHAR UNIQUE
         )
         """,
     ),
@@ -58,7 +60,7 @@ TABLES = [
         """
         CREATE TABLE judges (
             judge_id INTEGER PRIMARY KEY,
-            judge VARCHAR
+            judge VARCHAR UNIQUE
         )
         """,
     ),
@@ -67,7 +69,7 @@ TABLES = [
         """
         CREATE TABLE primary_dance_styles (
             primary_dance_style_id INTEGER PRIMARY KEY,
-            primary_dance_style VARCHAR
+            primary_dance_style VARCHAR UNIQUE
         )
         """,
     ),
@@ -76,7 +78,7 @@ TABLES = [
         """
         CREATE TABLE primary_song_artists (
             primary_song_artist_id INTEGER PRIMARY KEY,
-            primary_song_artist VARCHAR
+            primary_song_artist VARCHAR UNIQUE
         )
         """,
     ),
@@ -86,7 +88,8 @@ TABLES = [
         CREATE TABLE primary_songs (
             primary_song_id INTEGER PRIMARY KEY,
             primary_song VARCHAR,
-            primary_song_artist_id INTEGER REFERENCES primary_song_artists
+            primary_song_artist_id INTEGER REFERENCES primary_song_artists,
+            UNIQUE (primary_song, primary_song_artist_id)
         )
         """,
     ),
@@ -95,7 +98,7 @@ TABLES = [
         """
         CREATE TABLE week_themes (
             week_theme_id INTEGER PRIMARY KEY,
-            week_theme VARCHAR
+            week_theme VARCHAR UNIQUE
         )
         """,
     ),
@@ -106,7 +109,8 @@ TABLES = [
             couple_id INTEGER PRIMARY KEY,
             couple VARCHAR,
             celebrity_id INTEGER REFERENCES celebrities,
-            professional_id INTEGER REFERENCES professionals
+            professional_id INTEGER REFERENCES professionals,
+            UNIQUE (celebrity_id, professional_id)
         )
         """,
     ),
@@ -120,7 +124,8 @@ TABLES = [
             week_theme_id INTEGER REFERENCES week_themes,
             couple_id INTEGER REFERENCES couples,
             primary_dance_style_id INTEGER REFERENCES primary_dance_styles,
-            primary_song_id INTEGER REFERENCES primary_songs
+            primary_song_id INTEGER REFERENCES primary_songs,
+            eliminated BOOLEAN
         )
         """,
     ),

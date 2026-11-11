@@ -201,6 +201,77 @@ def write_csv(df, name, pluralizer):
     df.to_csv(filename, index=False, quoting=csv.QUOTE_NONNUMERIC)
 
 
+def _canon_result(value):
+    """Map a raw scraped `result` cell to a canonical status label, or None
+    if it isn't a real result at all.
+
+    A handful of `result` cells actually leaked an adjacent song/artist table
+    cell (e.g. '"Hot Stuff" — Donna Summer') instead of a real result; those
+    are recognizable because they start with a quote mark, and are treated
+    as "no result" rather than a fabricated category. Everything else is
+    normalized (e.g. the several 'Eliminated---...' / apostrophe-mangled
+    variants all collapse to plain 'Eliminated').
+    """
+    if pd.isna(value):
+        return None
+    value = str(value).strip()
+    if value.startswith('"'):
+        return None
+    low = value.lower()
+    if low.startswith('eliminated'):
+        return 'Eliminated'
+    if low.startswith('safe'):
+        return 'Safe'
+    if low == 'third place':
+        return 'Third place'
+    return value
+
+
+# A couple can have more than one dance (and `result` cell) on the same
+# night (e.g. a team-challenge dance plus their regular dance, or a
+# "bottom two"/jeopardy announcement followed by a dance-off verdict). Those
+# per-dance tags aren't contradictory, just differently final: pick
+# whichever tag present for that (season, week, couple) is highest priority
+# here, i.e. most decisive about whether the couple left the competition.
+_RESULT_PRIORITY = [
+    'Eliminated', 'Withdrew',
+    'Third place', 'Fourth place', 'Fifth place',
+    'Runners-up', 'Winners',
+    'Bottom two', 'Bottom three', 'Bottom five',
+    'Safe', 'Losers', 'Immunity',
+]
+_ELIMINATED_RESULTS = {
+    'Eliminated', 'Withdrew', 'Third place', 'Fourth place', 'Fifth place', 'Runners-up',
+}
+
+
+def _resolve_result(categories):
+    cats = set(c for c in categories if pd.notna(c))
+    for status in _RESULT_PRIORITY:
+        if status in cats:
+            return status
+    return None
+
+
+def compute_eliminated(df_final):
+    """Add an `eliminated` nullable-boolean column to df_final: whether the
+    couple was eliminated after that week, derived from the scraped
+    per-dance `result` text and resolved to one status per (season, week,
+    couple_id) using `_resolve_result`. Left as <NA> for couple/weeks where
+    no row carried a recognizable result (mostly premiere weeks, before any
+    elimination has happened yet)."""
+    result_category = df_final['result'].apply(_canon_result)
+    resolved_status = (
+        result_category
+        .groupby([df_final['season'], df_final['week'], df_final['couple_id']])
+        .transform(_resolve_result)
+    )
+    eliminated = resolved_status.isin(_ELIMINATED_RESULTS).astype('boolean')
+    eliminated[resolved_status.isna()] = pd.NA
+    df_final['eliminated'] = eliminated
+    return df_final
+
+
 def build_dimension_tables(df_final, pluralizer):
     """Factorize each catalog dimension into its own id, write out the
     dimension's csv, and add the id column back onto df_final so later
@@ -237,6 +308,9 @@ def build_dimension_tables(df_final, pluralizer):
         .factorize()[0] + 1
     )
 
+    # elimination status is derived from couple_id, so couple_id must exist first.
+    df_final = compute_eliminated(df_final)
+
     # song needs primary_artist
     df_final['primary_song_id'] = df_final.primary_song.factorize()[0] + 1
     write_csv(
@@ -268,7 +342,8 @@ def write_performances_table(df_final):
     (
         df_final
         .filter(['performance_id', 'season', 'week', 'week_theme_id',
-                 'couple_id', 'primary_dance_style_id', 'primary_song_id'], axis='columns')
+                 'couple_id', 'primary_dance_style_id', 'primary_song_id',
+                 'eliminated'], axis='columns')
         .drop_duplicates()
         .to_csv(os.path.join(OUTPUT_DIR, "performances.csv"), index=False, quoting=csv.QUOTE_NONNUMERIC)
     )
