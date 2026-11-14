@@ -49,7 +49,20 @@ def fit_ridge(cfg, params, model_name, history, season, week):
     return model, len(train)
 
 
-def backtest(cfg, weekly, perf, couples, season, week) -> None:
+DEFAULT_SAVE_DIR = Path("prediction_files") / "outputs"
+
+
+def save_csv(df, save_file, default_name):
+    """Write df to save_file (a .csv path, or a directory that gets default_name); return the path."""
+    path = Path(save_file)
+    if path.suffix.lower() != ".csv":
+        path = path / default_name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(path, index=False)
+    return path
+
+
+def backtest(cfg, weekly, perf, couples, season, week, save_file=None) -> None:
     """Score an aired week with both models and compare with the actual scores.
 
     The week's own rows from build_features hold only earlier-week history plus that week's
@@ -89,8 +102,6 @@ def backtest(cfg, weekly, perf, couples, season, week) -> None:
     out = out[["actual_rank", "celebrity", "professional", "styles", "order", "prev_score",
                "actual", "pred_preshow", "pred_order"]]
 
-    path = cfg.output_dir / f"backtest_s{season}_w{week}.csv"
-    out.to_csv(path, index=False)
     pd.options.display.float_format = "{:.2f}".format
     pd.options.display.width = 180
     print(f"Backtest season {season}, week {week} ({theme}); trained on {n_train} rows before it")
@@ -101,7 +112,8 @@ def backtest(cfg, weekly, perf, couples, season, week) -> None:
         m = _metrics(scored, col)
         print(f"{label:9s} {name}: RMSE {m['rmse']:.3f}, pair accuracy {m['pair_acc_pooled']:.3f}, "
               f"Spearman {m['spearman']:.3f}")
-    print(f"Saved {path}")
+    if save_file:
+        print(f"Saved {save_csv(out, save_file, f'S{season}W{week}_backtest.csv')}")
 
 
 def main() -> None:
@@ -114,6 +126,9 @@ def main() -> None:
     parser.add_argument("--season", type=int, default=None)
     parser.add_argument("--week", type=int, default=None)
     parser.add_argument("--config", default=None)
+    parser.add_argument("--save-file", nargs="?", const=str(DEFAULT_SAVE_DIR), default=None, metavar="PATH",
+                        help="also save the output CSV; PATH is a directory or .csv file "
+                             f"(default {DEFAULT_SAVE_DIR}). Without the flag nothing is written")
     parser.add_argument("--coefs", action="store_true", help="also print the fitted Ridge coefficients")
     args = parser.parse_args()
     if args.backtest and (args.season is None or args.week is None):
@@ -127,7 +142,7 @@ def main() -> None:
     couples = load_season_couples(cfg)
 
     if args.backtest:
-        backtest(cfg, weekly, perf, couples, args.season, args.week)
+        backtest(cfg, weekly, perf, couples, args.season, args.week, args.save_file)
         return
 
     season = args.season or int(weekly["season"].max())
@@ -202,15 +217,15 @@ def main() -> None:
     out.insert(0, "pred_rank", range(1, len(out) + 1))
     out = out[["pred_rank"] + show + ["prev_score", "running_mean", "prev_bottom3", "predicted"]]
 
-    suffix = "_order" if mode == "announced" else ""
-    path = cfg.output_dir / f"upcoming_s{season}_w{week}{suffix}.csv"
-    out.to_csv(path, index=False)
+    suffix = "_order" if mode == "announced" else "_noorder"
     pd.options.display.float_format = "{:.2f}".format
     pd.options.display.width = 160
     print(f"Season {season}, week {week} ({theme}); trained on {n_train} rows; "
           f"{mode} mode, model {model_name}")
     print(out.to_string(index=False))
-    print(f"Saved {path}")
+    if args.save_file:
+        # Named after the input schedule (e.g. S35W10.csv -> S35W10_order.csv)
+        print(f"Saved {save_csv(out, args.save_file, Path(args.schedule).stem + suffix + '.csv')}")
     if args.coefs:
         names_out = model.pipe_[0].get_feature_names_out(model.features)
         coefs = pd.Series(model.pipe_[-1].coef_, index=names_out).sort_values(key=abs, ascending=False)

@@ -4,4 +4,5 @@
 dwts_scrapy/.scrapy/
 dwts_scrapy/crawl.log
 *.duckdb
-outputs/
+prediction_files/**/*.csv
+/outputs/

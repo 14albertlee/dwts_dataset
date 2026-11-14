@@ -66,8 +66,8 @@ There are two models:
 
 | Run when | Schedule has `order`? | Model | Output |
 |---|---|---|---|
-| Theme and dances are known | no | `ridge_main_prev_bottom3` | `outputs/layer1/upcoming_s<season>_w<week>.csv` |
-| Running order is announced | yes | `ridge_main_order` (better) | `outputs/layer1/upcoming_s<season>_w<week>_order.csv` |
+| Theme and dances are known | no | `ridge_main_prev_bottom3` | printed; `--save-file` writes `<schedule>_noorder.csv` |
+| Running order is announced | yes | `ridge_main_order` (better) | printed; `--save-file` writes `<schedule>_order.csv` |
 
 ```sh
 # 1. template of couples still competing (optional if Claude writes the CSV from the prompt)
@@ -80,7 +80,19 @@ python scripts/predict_upcoming.py --schedule schedule.csv
 python scripts/predict_upcoming.py --schedule schedule.csv
 ```
 
-Optional flags: `--theme "Disney Night"` (instead of the column), `--coefs` (print coefficients).
+Optional flags: `--theme "Disney Night"` (instead of the column), `--coefs` (print coefficients),
+`--save-file [PATH]` (see below).
+
+By default predictions are only printed. `--save-file` also writes the CSV: bare, it goes to
+`prediction_files/outputs/`; `PATH` can be another directory or a `.csv` file. The file is named
+after the input schedule plus the mode, e.g. `prediction_files/inputs/S35W10.csv` gives
+`S35W10_noorder.csv` (no `order` column) or `S35W10_order.csv`. Backtests save as
+`S<season>W<week>_backtest.csv`. CSVs under `prediction_files/` are gitignored; the `inputs/` and
+`outputs/` folders are kept with `.gitkeep`.
+
+```sh
+python scripts/predict_upcoming.py --schedule prediction_files/inputs/S35W10.csv --save-file
+```
 
 ### Backtest an aired week (no CSV)
 
@@ -90,7 +102,7 @@ python scripts/predict_upcoming.py --backtest --season 34 --week 6
 
 Reads the theme, dances and running order from the database, trains only on weeks before it, and
 prints both models (pre-show and order-announced) next to the actual scores, with RMSE and pair
-accuracy. Output: `outputs/layer1/backtest_s<season>_w<week>.csv`. Week 1 is not supported.
+accuracy. Add `--save-file` to write `S<season>W<week>_backtest.csv`. Week 1 is not supported.
 
 ### Schedule CSV
 
