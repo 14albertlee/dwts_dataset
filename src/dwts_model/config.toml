@@ -13,7 +13,7 @@ short_seasons = [26]
 
 [model]
 # Model used by default in the plotting scripts and reported as the main result.
-main = "ridge_style_onehot_theme_emotional"
+main = "ridge_main_prev_bottom3"
 ridge_alphas = [0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]
 score_min = 1.0
 score_max = 10.0
@@ -66,6 +66,27 @@ theme_style_ordinal = [
     "theme_personal_emotional", "theme_disney", "theme_competition_stage",
     "theme_milestone_special", "theme_dance_competition", "theme_movies_tv", "theme_none",
     "style_difficulty", "prev_style_difficulty", "style_share_latin", "style_share_ballroom",
+]
+
+# Main set plus the prior-week standing features, one at a time and together.
+main_prev_rank = [
+    "prev_score", "running_mean", "week", "theme_personal_emotional", "prev_rank",
+    "style_cha_cha_cha", "style_foxtrot", "style_quickstep", "style_jive", "style_paso_doble",
+    "style_tango", "style_viennese_waltz", "style_samba", "style_rumba", "style_argentine_tango",
+    "style_salsa", "style_jazz", "style_freestyle", "style_contemporary", "style_waltz",
+]
+main_prev_bottom3 = [
+    "prev_score", "running_mean", "week", "theme_personal_emotional", "prev_bottom3",
+    "style_cha_cha_cha", "style_foxtrot", "style_quickstep", "style_jive", "style_paso_doble",
+    "style_tango", "style_viennese_waltz", "style_samba", "style_rumba", "style_argentine_tango",
+    "style_salsa", "style_jazz", "style_freestyle", "style_contemporary", "style_waltz",
+]
+main_prev_standing = [
+    "prev_score", "running_mean", "week", "theme_personal_emotional",
+    "prev_rank", "prev_dev", "prev_bottom3",
+    "style_cha_cha_cha", "style_foxtrot", "style_quickstep", "style_jive", "style_paso_doble",
+    "style_tango", "style_viennese_waltz", "style_samba", "style_rumba", "style_argentine_tango",
+    "style_salsa", "style_jazz", "style_freestyle", "style_contemporary", "style_waltz",
 ]
 
 [output]

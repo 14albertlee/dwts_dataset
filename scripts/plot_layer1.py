@@ -37,8 +37,8 @@ def main() -> None:
     ax = axes[0, 0]
     for m in models:
         d = by_week[by_week["model"] == m]
-        ax.plot(d["week"], d["mae"], marker="o", label=m)
-    ax.set(title="MAE by week", xlabel="week", ylabel="MAE")
+        ax.plot(d["week"], d["rmse"], marker="o", label=m)
+    ax.set(title="RMSE by week", xlabel="week", ylabel="RMSE")
     ax.legend()
 
     ax = axes[0, 1]

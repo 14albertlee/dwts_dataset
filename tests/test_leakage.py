@@ -3,7 +3,7 @@ import pandas as pd
 
 from dwts_model.baselines import FieldAdjusted, LastWeekDrift
 from dwts_model.config import load_config
-from dwts_model.feature_engineering import build_features
+from dwts_model.feature_engineering import build_context_features, build_features
 from dwts_model.splits import rolling_origin
 
 
@@ -101,6 +101,48 @@ def test_pair_counts_handles_ties_and_ordering():
     assert _pair_counts(actual, np.array([1.0, 2.0, 2.5, 4.0])) == (0.0, 5)
     # A predicted tie on a comparable pair counts as half.
     assert _pair_counts(np.array([9.0, 8.0]), np.array([5.0, 5.0])) == (0.5, 1)
+
+
+def test_prev_bottom3_flags_only_prior_week_in_large_fields():
+    weekly = _weekly(couples=8)
+    df = build_features(weekly)
+    row = df[(df["season"] == 2) & (df["week"] == 4)].iloc[0]
+    prior = weekly[(weekly["season"] == 2) & (weekly["week"] == 3)].set_index("couple_id")["score"]
+    assert row["prev_bottom3"] == float(prior.rank(method="min").loc[row["couple_id"]] <= 3)
+    small = build_features(_weekly(couples=5))
+    assert (small["prev_bottom3"] == 0).all()
+
+
+def test_upcoming_features_match_training_features():
+    from dwts_model.predict import build_upcoming_features
+
+    weekly = _weekly(couples=8).assign(n_performances=1, eliminated=False)
+    styles = ["Foxtrot", "Samba", "Jazz", "Rumba"]
+    perf = pd.DataFrame(
+        [
+            (r.season, r.week, r.couple_id, i, "Disney Night" if r.week == 4 else "No Theme", styles[(r.week + r.couple_id) % 4])
+            for i, r in enumerate(weekly.itertuples())
+        ],
+        columns=["season", "week", "couple_id", "performance_id", "theme", "style"],
+    )
+    full = build_features(weekly, build_context_features(perf))
+    target = full[(full["season"] == 3) & (full["week"] == 4)]
+
+    # Pretend week 4 of season 3 hasn't aired: only its schedule is known.
+    schedule = pd.DataFrame(
+        {
+            "couple_id": target["couple_id"].to_numpy(),
+            "styles": [[styles[(4 + c) % 4]] for c in target["couple_id"]],
+        }
+    )
+    up = build_upcoming_features(weekly, perf, schedule, season=3, week=4, theme="Disney Night")
+
+    cols = [c for c in full.columns if c not in ("score", "n_performances", "eliminated")]
+    pd.testing.assert_frame_equal(
+        up.sort_values("couple_id")[cols].reset_index(drop=True),
+        target.sort_values("couple_id")[cols].reset_index(drop=True),
+    )
+    assert up["score"].isna().all()
 
 
 def test_baseline_statistics_use_only_training_data():

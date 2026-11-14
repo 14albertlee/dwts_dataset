@@ -33,10 +33,10 @@ def main() -> None:
 
     cfg = load_config(args.config)
     challenger = args.challenger or cfg.main_model
-    # The comparison baseline is chosen on validation MAE so holdout is not used to pick it.
+    # The comparison baseline is chosen on validation RMSE so holdout is not used to pick it.
     val = pd.read_csv(cfg.output_dir / "metrics_overall_validate.csv")
     val = val[(val["scope"] == "all") & val["model"].isin(BASELINES)]
-    baseline = val.loc[val["mae"].idxmin(), "model"]
+    baseline = val.loc[val["rmse"].idxmin(), "model"]
 
     preds = pd.read_csv(cfg.output_dir / f"predictions_{args.mode}.csv")
     ch = challenger

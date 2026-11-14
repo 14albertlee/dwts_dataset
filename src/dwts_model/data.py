@@ -43,6 +43,23 @@ LEFT JOIN {schema}.primary_dance_styles d USING (primary_dance_style_id)
 WHERE p.week IS NOT NULL
 """
 
+_COUPLES_QUERY = """
+SELECT DISTINCT p.season, c.couple_id, ce.celebrity, pr.professional
+FROM {schema}.performances p
+JOIN {schema}.couples c USING (couple_id)
+JOIN {schema}.celebrities ce USING (celebrity_id)
+JOIN {schema}.professionals pr USING (professional_id)
+"""
+
+
+def load_season_couples(cfg: Config) -> pd.DataFrame:
+    """Couple ids with celebrity and professional names, one row per (season, couple)."""
+    con = duckdb.connect(str(cfg.db_path), read_only=True)
+    try:
+        return con.execute(_COUPLES_QUERY.format(schema=cfg.schema)).df()
+    finally:
+        con.close()
+
 
 def load_performance_context(cfg: Config) -> pd.DataFrame:
     """One row per performance with its week theme text and dance style name."""

@@ -13,6 +13,8 @@ from .categories import (
 
 THEME_CATEGORIES = [c for c, _ in THEME_RULES] + [THEME_DEFAULT]
 THEME_REFERENCE = THEME_DEFAULT  # omitted from the indicators to avoid collinearity
+BOTTOM_K = 3
+BOTTOM3_MIN_FIELD = 6
 
 
 def build_context_features(perf: pd.DataFrame) -> pd.DataFrame:
@@ -66,10 +68,14 @@ def build_features(weekly: pd.DataFrame, context: pd.DataFrame | None = None) ->
     # Normalized rank in [0, 1]: 1 = best in the field, 0 = worst; ties share the average rank.
     n_field = week_group.transform("count")
     df["_rank"] = ((week_group.rank(method="average") - 1) / (n_field - 1)).where(n_field > 1)
-    shifted = df.groupby(["season", "couple_id"], sort=False)[["_dev", "_rank"]].shift(1)
+    # Bottom-3 flag (ties at the cutoff included). Meaningless once the field is small, so only
+    # flagged when at least BOTTOM3_MIN_FIELD couples were dancing.
+    df["_bottom3"] = ((week_group.rank(method="min") <= BOTTOM_K) & (n_field >= BOTTOM3_MIN_FIELD)).astype(float)
+    shifted = df.groupby(["season", "couple_id"], sort=False)[["_dev", "_rank", "_bottom3"]].shift(1)
     df["prev_dev"] = shifted["_dev"]
     df["prev_rank"] = shifted["_rank"]
-    df = df.drop(columns=["_dev", "_rank"])
+    df["prev_bottom3"] = shifted["_bottom3"]
+    df = df.drop(columns=["_dev", "_rank", "_bottom3"])
 
     df = df.dropna(subset=["prev_score"]).reset_index(drop=True)
     return df.sort_values(["season", "week", "couple_id"]).reset_index(drop=True)

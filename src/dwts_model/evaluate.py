@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from scipy.stats import kendalltau, spearmanr
+from scipy.stats import spearmanr
 
 
 def _pair_counts(actual: np.ndarray, pred: np.ndarray) -> tuple[float, int]:
@@ -19,11 +19,11 @@ def _pair_counts(actual: np.ndarray, pred: np.ndarray) -> tuple[float, int]:
 def _group_stats(group: pd.DataFrame, pred_col: str) -> pd.Series:
     actual, pred = group["score"].to_numpy(), group[pred_col].to_numpy()
     correct, pairs = _pair_counts(actual, pred)
+    # Spearman uses average ranks for ties.
     varied = len(group) >= 3 and group[pred_col].nunique() >= 2 and group["score"].nunique() >= 2
     return pd.Series(
         {
             "spearman": spearmanr(pred, actual)[0] if varied else np.nan,
-            "kendall_tau": kendalltau(pred, actual, variant="b")[0] if varied else np.nan,
             "pair_acc": correct / pairs if pairs else np.nan,
             "correct_pairs": correct,
             "pairs": pairs,
@@ -36,10 +36,8 @@ def _metrics(df: pd.DataFrame, model: str) -> dict:
     per_week = df.groupby(["season", "week"]).apply(lambda g: _group_stats(g, model), include_groups=False)
     return {
         "n": len(df),
-        "mae": err.abs().mean(),
         "rmse": float(np.sqrt((err**2).mean())),
         "spearman": per_week["spearman"].mean(),
-        "kendall_tau": per_week["kendall_tau"].mean(),
         # Mean of per-week accuracies (each week equal) and pooled over all pairs (big weeks count more).
         "pair_acc": per_week["pair_acc"].mean(),
         "pair_acc_pooled": per_week["correct_pairs"].sum() / per_week["pairs"].sum(),
