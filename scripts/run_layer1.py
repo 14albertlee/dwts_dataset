@@ -17,7 +17,7 @@ from dwts_model.config import load_config  # noqa: E402
 from dwts_model.data import load_performance_context, load_weekly_scores  # noqa: E402
 from dwts_model.evaluate import summarize  # noqa: E402
 from dwts_model.feature_engineering import build_context_features, build_features  # noqa: E402
-from dwts_model.models import RidgeModel, tune_ridge_alpha  # noqa: E402
+from dwts_model.models import LGBMModel, LMMModel, RidgeModel, tune_lgbm, tune_ridge_alpha  # noqa: E402
 from dwts_model.splits import rolling_origin  # noqa: E402
 
 
@@ -26,6 +26,7 @@ def main() -> None:
     parser.add_argument("--mode", choices=["validate", "holdout"], required=True)
     parser.add_argument("--confirm-holdout", action="store_true", help="required for --mode holdout")
     parser.add_argument("--feature-sets", nargs="+", default=None, help="subset of config feature sets to run")
+    parser.add_argument("--models", nargs="+", choices=["ridge", "lgbm", "lmm"], default=["ridge", "lgbm", "lmm"])
     parser.add_argument("--config", default=None)
     args = parser.parse_args()
     if args.mode == "holdout" and not args.confirm_holdout:
@@ -42,24 +43,42 @@ def main() -> None:
     if unknown:
         sys.exit(f"Unknown feature sets: {sorted(unknown)}")
 
+    saved = {"ridge_alpha": {}, "lgbm_params": {}, "validation_mae_ridge": {}, "validation_mae_lgbm": {}}
+    if params_path.exists():
+        saved.update(json.loads(params_path.read_text()))
+    alphas, lgbm_params = saved["ridge_alpha"], saved["lgbm_params"]
+
     if args.mode == "validate":
-        alphas, maes = {}, {}
         for name, feats in feature_sets.items():
-            alphas[name], maes[name] = tune_ridge_alpha(df, cfg, feats)
-            print(f"ridge_{name}: alpha={alphas[name]} validation MAE by alpha {maes[name]}")
-        params_path.write_text(json.dumps({"ridge_alpha": alphas, "validation_mae": maes}, indent=2))
+            if "ridge" in args.models:
+                alphas[name], maes = tune_ridge_alpha(df, cfg, feats)
+                saved["validation_mae_ridge"][name] = maes
+                print(f"ridge_{name}: alpha={alphas[name]} validation MAE by alpha {maes}")
+            if "lgbm" in args.models:
+                lgbm_params[name], results = tune_lgbm(df, cfg, feats)
+                saved["validation_mae_lgbm"][name] = [{"params": p, "mae": m} for p, m in results]
+                print(f"lgbm_{name}: {lgbm_params[name]} (MAE {min(m for _, m in results):.4f})")
+        params_path.write_text(json.dumps(saved, indent=2))
     else:
         if not params_path.exists():
             sys.exit("No selected_params.json: run --mode validate first.")
-        alphas = json.loads(params_path.read_text())["ridge_alpha"]
-        missing = set(feature_sets) - set(alphas)
-        if missing:
-            sys.exit(f"No validated alpha for {sorted(missing)}: run --mode validate first.")
-        print(f"Holdout run with frozen alphas={ {k: alphas[k] for k in feature_sets} }")
+        for name in feature_sets:
+            missing = [
+                m for m, got in (("ridge", alphas), ("lgbm", lgbm_params))
+                if m in args.models and name not in got
+            ]
+            if missing:
+                sys.exit(f"No validated params for {name} ({missing}): run --mode validate first.")
+        print(f"Holdout run with frozen params for {list(feature_sets)}")
 
-    models = all_baselines() + [
-        RidgeModel(feats, alphas[name], name=f"ridge_{name}") for name, feats in feature_sets.items()
-    ]
+    models = all_baselines()
+    for name, feats in feature_sets.items():
+        if "ridge" in args.models:
+            models.append(RidgeModel(feats, alphas[name], name=f"ridge_{name}"))
+        if "lgbm" in args.models:
+            models.append(LGBMModel(feats, lgbm_params[name], name=f"lgbm_{name}"))
+        if "lmm" in args.models:
+            models.append(LMMModel(feats, name=f"lmm_{name}"))
     names = [m.name for m in models]
 
     frames = []

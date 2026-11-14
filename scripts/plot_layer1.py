@@ -22,11 +22,12 @@ META = {"season", "week", "couple_id", "score"}
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=["validate", "holdout"], required=True)
-    parser.add_argument("--challenger", default="ridge_phase2a")
+    parser.add_argument("--challenger", default=None, help="defaults to the main model in config.toml")
     parser.add_argument("--config", default=None)
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    args.challenger = args.challenger or cfg.main_model
     preds = pd.read_csv(cfg.output_dir / f"predictions_{args.mode}.csv")
     models = [c for c in preds.columns if c not in META]
     by_week = pd.read_csv(cfg.output_dir / f"metrics_by_week_{args.mode}.csv")

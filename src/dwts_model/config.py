@@ -15,6 +15,8 @@ class Config:
     holdout: tuple[int, int]
     short_seasons: tuple[int, ...]
     features: dict[str, tuple[str, ...]]
+    lgbm_grid: dict[str, list]
+    main_model: str
     ridge_alphas: tuple[float, ...]
     score_min: float
     score_max: float
@@ -38,6 +40,8 @@ def load_config(path: Path | str | None = None) -> Config:
         holdout=tuple(splits["holdout"]),
         short_seasons=tuple(splits["short_seasons"]),
         features={k: tuple(v) for k, v in model["feature_sets"].items()},
+        lgbm_grid=dict(model["lgbm"]),
+        main_model=model["main"],
         ridge_alphas=tuple(model["ridge_alphas"]),
         score_min=model["score_min"],
         score_max=model["score_max"],

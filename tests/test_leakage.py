@@ -74,6 +74,35 @@ def test_prev_rank_and_dev_use_only_prior_week_field():
     assert df["prev_rank"].between(0, 1).all()
 
 
+def test_lmm_prediction_ignores_own_and_later_scores():
+    from dwts_model.models import LMMModel
+
+    weekly = _weekly()
+    df = build_features(weekly)
+    train, test = df[df["season"] < 6], df[df["season"] == 6].copy()
+    model = LMMModel(["prev_score", "running_mean", "week"]).fit(train)
+    base = model.predict(test)
+    altered = test.copy()
+    mask = (altered["week"] >= 4)
+    altered.loc[mask, "score"] = 1.0
+    pred = model.predict(altered)
+    # Scores from week 4 on cannot affect predictions for weeks <= 4.
+    early = altered["week"] <= 4
+    assert np.allclose(base[early], pred[early])
+
+
+def test_pair_counts_handles_ties_and_ordering():
+    from dwts_model.evaluate import _pair_counts
+
+    actual = np.array([9.0, 8.0, 8.0, 6.0])
+    # Perfect order: the actual-tied pair (8, 8) is skipped, leaving 5 comparable pairs.
+    assert _pair_counts(actual, np.array([4.0, 3.0, 2.5, 1.0])) == (5.0, 5)
+    # Fully reversed order gets nothing right.
+    assert _pair_counts(actual, np.array([1.0, 2.0, 2.5, 4.0])) == (0.0, 5)
+    # A predicted tie on a comparable pair counts as half.
+    assert _pair_counts(np.array([9.0, 8.0]), np.array([5.0, 5.0])) == (0.5, 1)
+
+
 def test_baseline_statistics_use_only_training_data():
     df = build_features(_weekly())
     train = df[df["season"] < 6]

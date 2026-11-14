@@ -1,24 +1,49 @@
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr
+from scipy.stats import kendalltau, spearmanr
 
 
-def _week_spearman(group: pd.DataFrame, pred_col: str) -> float:
-    if len(group) < 3 or group[pred_col].nunique() < 2 or group["score"].nunique() < 2:
-        return np.nan
-    return spearmanr(group[pred_col], group["score"])[0]
+def _pair_counts(actual: np.ndarray, pred: np.ndarray) -> tuple[float, int]:
+    """(correctly ordered pairs, comparable pairs) within one week.
+
+    Pairs tied on the actual score have no right answer and are skipped.
+    A predicted tie on a comparable pair counts as half correct.
+    """
+    da = np.sign(actual[:, None] - actual[None, :])
+    dp = np.sign(pred[:, None] - pred[None, :])
+    upper = np.triu(np.ones_like(da, dtype=bool), k=1) & (da != 0)
+    correct = (da[upper] == dp[upper]).sum() + 0.5 * (dp[upper] == 0).sum()
+    return float(correct), int(upper.sum())
+
+
+def _group_stats(group: pd.DataFrame, pred_col: str) -> pd.Series:
+    actual, pred = group["score"].to_numpy(), group[pred_col].to_numpy()
+    correct, pairs = _pair_counts(actual, pred)
+    varied = len(group) >= 3 and group[pred_col].nunique() >= 2 and group["score"].nunique() >= 2
+    return pd.Series(
+        {
+            "spearman": spearmanr(pred, actual)[0] if varied else np.nan,
+            "kendall_tau": kendalltau(pred, actual, variant="b")[0] if varied else np.nan,
+            "pair_acc": correct / pairs if pairs else np.nan,
+            "correct_pairs": correct,
+            "pairs": pairs,
+        }
+    )
 
 
 def _metrics(df: pd.DataFrame, model: str) -> dict:
     err = df[model] - df["score"]
-    per_week = df.groupby(["season", "week"]).apply(
-        lambda g: _week_spearman(g, model), include_groups=False
-    )
+    per_week = df.groupby(["season", "week"]).apply(lambda g: _group_stats(g, model), include_groups=False)
     return {
         "n": len(df),
         "mae": err.abs().mean(),
         "rmse": float(np.sqrt((err**2).mean())),
-        "spearman": per_week.mean(),
+        "spearman": per_week["spearman"].mean(),
+        "kendall_tau": per_week["kendall_tau"].mean(),
+        # Mean of per-week accuracies (each week equal) and pooled over all pairs (big weeks count more).
+        "pair_acc": per_week["pair_acc"].mean(),
+        "pair_acc_pooled": per_week["correct_pairs"].sum() / per_week["pairs"].sum(),
+        "pairs": int(per_week["pairs"].sum()),
     }
 
 

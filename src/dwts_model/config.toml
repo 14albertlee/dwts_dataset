@@ -12,9 +12,23 @@ holdout = [33, 35]
 short_seasons = [26]
 
 [model]
+# Model used by default in the plotting scripts and reported as the main result.
+main = "ridge_style_onehot_theme_emotional"
 ridge_alphas = [0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]
 score_min = 1.0
 score_max = 10.0
+
+# LightGBM grid (full cross product, tuned per feature set on validation folds only).
+# Kept small and shallow: the data is a few thousand rows.
+[model.lgbm]
+target = ["score", "delta"]
+num_leaves = [4, 8]
+n_estimators = [150, 400]
+learning_rate = [0.03]
+min_child_samples = [20, 40]
+subsample = [0.8]
+colsample_bytree = [0.8]
+reg_lambda = [5.0]
 
 # One Ridge model is fit per feature set, named ridge_<set>. Each set gets its own alpha.
 [model.feature_sets]
