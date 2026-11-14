@@ -41,7 +41,46 @@ def build_context_features(perf: pd.DataFrame) -> pd.DataFrame:
         out[f"style_share_{slug(grp)}"] = (p["group"] == grp).groupby([p[k] for k in keys]).mean()
     for style in ONEHOT_STYLES:
         out[f"style_{slug(style)}"] = (base == style).groupby([p[k] for k in keys]).mean()
+    if "running_order" in p.columns:
+        out = out.join(build_order_features(p))
     return out.drop(columns="theme_cat").reset_index()
+
+
+ORDER_MIN_ROUND = 4  # smaller rounds (finales, trios) get the neutral base-rate values
+
+
+def _order_columns(position: pd.Series, size: pd.Series) -> pd.DataFrame:
+    """Actual-order features for each performance, plus the base rates expected under a random order."""
+    n = size.astype(float)
+    pos = position.astype(float)
+    ok = (n >= ORDER_MIN_ROUND) & pos.notna()
+    base_first = 1 / n
+    base_sq = (2 * n - 1) / (6 * (n.clip(lower=2) - 1))
+    frac = (pos - 1) / (n - 1)
+    return pd.DataFrame(
+        {
+            "order_frac": frac.where(ok, 0.5),
+            "order_first": (pos == 1).astype(float).where(ok, base_first),
+            "order_last": (pos == n).astype(float).where(ok, base_first),
+            "order_frac_sq": (frac**2).where(ok, base_sq),
+            "base_order_frac": 0.5,
+            "base_order_first": base_first,
+            "base_order_last": base_first,
+            "base_order_frac_sq": base_sq,
+        }
+    )
+
+
+def build_order_features(p: pd.DataFrame) -> pd.DataFrame:
+    """Within-night running order features per (season, week, couple), averaged over the couple's dances.
+
+    The order is announced at the start of the episode. Fit on the actual order (`order_*`); the
+    pre-show variant substitutes the `base_order_*` columns, which are the random-order expectations.
+    """
+    cols = _order_columns(p["running_order"], p["round_size"])
+    keys = ["season", "week", "couple_id"]
+    return cols.groupby([p[k] for k in keys]).mean()
+
 
 
 def build_features(weekly: pd.DataFrame, context: pd.DataFrame | None = None) -> pd.DataFrame:

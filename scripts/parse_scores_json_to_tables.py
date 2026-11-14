@@ -23,12 +23,46 @@ OUTPUT_DIR = os.path.join(REPO_ROOT, "data", "raw")
 SCORES_JSON = os.path.join(REPO_ROOT, "dwts_scrapy", "scores.json")
 
 
+# The same pro appears under two names on Wikipedia.
+PROFESSIONAL_ALIASES = {"Valentin Chmerkovskiy": "Val Chmerkovskiy"}
+
+
+def add_running_order(df):
+    """Add `round`, `running_order` and `round_size`.
+
+    Wikipedia week tables list couples in the order they performed, and the
+    spider yields rows in page order. The JSON has no table marker, so a new
+    table (round) starts when a couple repeats that is not the previous row's
+    couple. A couple repeating back to back is the older couple-major layout
+    (one row per dance in one table); `running_order` is then the couple's
+    position, so it repeats across that couple's rows.
+    Must run on the full scraped rows, before any are dropped, so gaps from
+    later filtering do not shift the positions.
+    """
+    round_, order = [], []
+    state = {}
+    for season, title, couple in zip(df['season'], df['week_title'], df['couple']):
+        cur = state.setdefault((season, title), {'round': 1, 'pos': {}, 'last': None})
+        if couple in cur['pos'] and couple != cur['last']:
+            cur['round'] += 1
+            cur['pos'] = {}
+        cur['pos'].setdefault(couple, len(cur['pos']) + 1)
+        cur['last'] = couple
+        round_.append(cur['round'])
+        order.append(cur['pos'][couple])
+    df = df.assign(round=round_, running_order=order)
+    df['round_size'] = df.groupby(['season', 'week_title', 'round'])['running_order'].transform('max')
+    return df
+
+
 def load_scores(path):
     """Load the raw scraped performances and do the initial column cleanup."""
     df = (
         pd.read_json(path)
+        .assign(professional=lambda df_: df_.professional.replace(PROFESSIONAL_ALIASES))
         # scores comes in as one row per performance
         .assign(performance_id=lambda df_: np.arange(df_.shape[0]))
+        .pipe(add_running_order)
         .replace(r'^\s*$', np.nan, regex=True)
         .rename(columns={'judge': 'judge_excluded', "dance": "dance_style", "dance_&_theme": "dance_and_theme"})
         .dropna(subset=['couple'])
@@ -345,7 +379,7 @@ def write_performances_table(df_final):
         df_final
         .filter(['performance_id', 'season', 'week', 'week_theme_id',
                  'couple_id', 'primary_dance_style_id', 'primary_song_id',
-                 'eliminated'], axis='columns')
+                 'eliminated', 'round', 'running_order', 'round_size'], axis='columns')
         .drop_duplicates()
         .to_csv(os.path.join(OUTPUT_DIR, "performances.csv"), index=False, quoting=csv.QUOTE_NONNUMERIC)
     )

@@ -36,6 +36,7 @@ def load_weekly_scores(cfg: Config) -> pd.DataFrame:
 
 _PERFORMANCE_QUERY = """
 SELECT p.season, p.week, p.couple_id, p.performance_id,
+       p.round, p.running_order, p.round_size,
        t.week_theme AS theme, d.primary_dance_style AS style
 FROM {schema}.performances p
 LEFT JOIN {schema}.week_themes t USING (week_theme_id)

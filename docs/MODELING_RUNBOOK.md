@@ -1,7 +1,8 @@
 # Layer 1 Runbook: judge-score model
 
-How to prepare the data, train and validate the model, and score a new week. The modeling
-rationale is in [MODELING_PLAN.md](./MODELING_PLAN.md). All commands run from the repository root.
+Commands only. Run from the repository root. Rationale: [MODELING_PLAN.md](./MODELING_PLAN.md);
+experiments: [LAYER1_NEXT_EXPERIMENTS.md](./LAYER1_NEXT_EXPERIMENTS.md). Settings live in
+[`config.toml`](../src/dwts_model/config.toml). Outputs go to `outputs/layer1/`.
 
 ## 1. Setup
 
@@ -9,143 +10,110 @@ rationale is in [MODELING_PLAN.md](./MODELING_PLAN.md). All commands run from th
 pip install -r requirements.txt
 ```
 
-The model code lives in `src/dwts_model/`. Entry points are in `scripts/`. Outputs go to
-`outputs/layer1/` (git-ignored).
+## 2. Scrape and build the database
 
-## 2. Data prep
-
-There are two stages.
-
-**Build the database (only when the raw data changes).** This is the dataset build described in the
-[README](../README.md):
+Needed only when new episodes have aired.
 
 ```sh
+cd dwts_scrapy
+scrapy crawl dwts_scores -O scores.json
+cd ..
 python scripts/parse_scores_json_to_tables.py   # scores.json -> data/raw/*.csv
 python scripts/build_duckdb.py                  # data/raw/*.csv -> data/database/dwts_dataset.duckdb
 ```
 
-**Model data prep (automatic, runs inside every train/validate/score command).** There is no separate
-script. Each run reads the database read-only and builds the modeling table:
+## 3. Fit and validate
 
-| Step | Code |
-|---|---|
-| One row per (season, week, couple), score = mean per-judge score, performances averaged | `data.py` (`load_weekly_scores`) |
-| Theme text and dance style for each performance | `data.py` (`load_performance_context`) |
-| Theme category and style groupings (keyword rules, no id tables) | `categories.py` |
-| Features: `prev_score`, `running_mean`, `week`, `prev_bottom3`, theme and style indicators; drops each couple's first week | `feature_engineering.py` |
-
-Every feature for a week uses only earlier weeks, plus the schedule-known theme and dances for that week.
-
-## 3. Config
-
-Everything is in [`src/dwts_model/config.toml`](../src/dwts_model/config.toml):
-
-| Section | What it controls |
-|---|---|
-| `[data]` | `db_path` (default `data/database/dwts_dataset.duckdb`), `schema` |
-| `[splits]` | `train_end = 25`, `validation = [26, 32]`, `holdout = [33, 35]`, `short_seasons` |
-| `[model]` | `main` (the main model, `ridge_main_prev_bottom3`), `ridge_alphas` grid, score clip range |
-| `[model.lgbm]` | LightGBM tuning grid |
-| `[model.feature_sets]` | Named feature lists. Each set becomes a Ridge model named `ridge_<set>` |
-| `[output]` | `dir` (default `outputs/layer1`) |
-
-To try new features, add a named list under `[model.feature_sets]`. Pass `--config <path>` to any
-script to use a different config file.
-
-## 4. Training and validation
-
-There is no saved model file. Ridge fits in seconds, so every run refits from scratch.
+Re-run after any data or config change. Saves the tuned alphas that steps 4 and 5 use
+(`selected_params.json`).
 
 ```sh
 python scripts/run_layer1.py --mode validate --models ridge
 ```
 
-What it does:
-- Rolling origin by season: for each test season S in the validation range, train on all seasons before S and predict S.
-- Tunes each model's hyperparameters (Ridge alpha) on the validation folds only, and saves them to `outputs/layer1/selected_params.json`.
-- Scores the baselines (last week, last week + drift, running mean, field-adjusted) next to each model.
-
-Options:
-- `--models ridge lgbm lmm` picks model types. The default runs all three, and the LMM takes about 10 minutes, so use `--models ridge` for quick runs.
-- `--feature-sets phase1 style_onehot ...` restricts which feature sets run.
-
-Outputs in `outputs/layer1/` (suffix `_validate`):
-- `predictions_validate.csv`: every test row with each model's prediction.
-- `metrics_overall_*.csv`, `metrics_by_season_*.csv`, `metrics_by_week_*.csv`.
-
-Metrics: RMSE, Spearman rank correlation (average ranks for ties), and pairwise accuracy (pairs tied on the actual score skipped; a predicted tie counts half). Pairwise accuracy is reported per week and pooled.
-
-Related scripts (no refitting):
+Optional:
 
 ```sh
-python scripts/score_predictions.py --mode validate     # re-score saved predictions
-python scripts/plot_layer1.py --mode validate           # diagnostics image
-python scripts/plot_double_lift.py --mode validate      # double lift chart vs the best baseline
+python scripts/run_layer1.py --mode validate                    # also LightGBM and LMM (~10 min)
+python scripts/score_predictions.py --mode validate             # re-score saved predictions
+python scripts/plot_layer1.py --mode validate                   # diagnostics image
+python scripts/plot_double_lift.py --mode validate              # double lift chart
+python scripts/run_order_experiment.py                          # running-order experiment (3.1)
 ```
 
-### Holdout
+## 4. Score the holdout (seasons 33-35)
 
-The holdout seasons are scored deliberately, using the parameters frozen by the validate run:
+Only for a final check, never for tuning.
 
 ```sh
-python scripts/run_layer1.py --mode holdout --confirm-holdout --models ridge --feature-sets phase1 style_onehot_theme_emotional main_prev_bottom3
+python scripts/run_layer1.py --mode holdout --confirm-holdout --models ridge --feature-sets main_prev_bottom3 main_order
 ```
 
-The flag is required. The holdout has already been looked at several times, so don't use it for tuning.
+## 5. Score an upcoming episode
 
-## 5. Scoring a new week
+The script scores the week after the last scored week of the latest season in the database, so
+re-run step 2 after each episode airs. The printed header shows the season and week it used.
+
+There are two models:
+
+| Run when | Schedule has `order`? | Model | Output |
+|---|---|---|---|
+| Theme and dances are known | no | `ridge_main_prev_bottom3` | `outputs/layer1/upcoming_s<season>_w<week>.csv` |
+| Running order is announced | yes | `ridge_main_order` (better) | `outputs/layer1/upcoming_s<season>_w<week>_order.csv` |
 
 ```sh
+# 1. template of couples still competing (optional if Claude writes the CSV from the prompt)
 python scripts/predict_upcoming.py --template schedule.csv
-# fill in the `theme` and `styles` columns (see below)
+
+# 2. fill in theme and styles (prompt for Claude: PROMPT_UPCOMING_SCHEDULE.md), then score pre-show
+python scripts/predict_upcoming.py --schedule schedule.csv
+
+# 3. once the order is announced, fill the order column and re-run the same command
 python scripts/predict_upcoming.py --schedule schedule.csv
 ```
 
-### Schedule CSV format
+Optional flags: `--theme "Disney Night"` (instead of the column), `--coefs` (print coefficients).
 
-One row per couple still competing. The template provides `celebrity` and `professional`; you fill in `theme` and `styles`.
+### Backtest an aired week (no CSV)
 
-| Column | Required | Meaning |
-|---|---|---|
-| `celebrity` | yes | Matched to the season's couples by name (case-insensitive). |
-| `professional` | no | Informational only. |
-| `theme` | yes, unless `--theme` is given | The week's theme, e.g. `Disney Night`. Use the same value on every row. |
-| `styles` | yes | The dances the couple performs that week. Separate several with `;`. |
-
-```csv
-celebrity,professional,theme,styles
-Ezra Frech,Daniella Karagach,Disney Night,Foxtrot; Team Dance
-Another Celeb,Some Pro,Disney Night,Jive
+```sh
+python scripts/predict_upcoming.py --backtest --season 34 --week 6
 ```
 
-- **Multiple styles:** put them in one cell, separated by `;`. Spaces around `;` are trimmed. Quote the cell only if it contains a comma.
-- Every couple needs at least one style. The number of styles sets that couple's `n_performances`, so list every dance they will do.
-- A style with no dedicated indicator is treated as `other`, and the script prints a note.
-- **Theme:** `--theme "Disney Night"` can be passed instead of the column and overrides it. If the column is used, it must hold exactly one distinct value. The theme is mapped to a category by keyword rules, so new theme names work without changes.
+Reads the theme, dances and running order from the database, trains only on weeks before it, and
+prints both models (pre-show and order-announced) next to the actual scores, with RMSE and pair
+accuracy. Output: `outputs/layer1/backtest_s<season>_w<week>.csv`. Week 1 is not supported.
 
-- Defaults to the latest season and the week after its last scored week. Use `--season` and `--week` to predict a week "as of" an earlier point (a backtest).
-- Uses the main model from the config, trained on all scored weeks before the target week, with the alpha from `selected_params.json`. Run the validate step first.
-- Couples are matched by celebrity name. Week-1 couples are not supported (no history).
-- Output: a table ranked by predicted score, saved as `outputs/layer1/upcoming_s<season>_w<week>.csv`.
+### Schedule CSV
 
-### Do validation and new-week scoring share code?
+Pre-show (`order` empty, or the column left out):
 
-They share the feature and model code but not the driver or the metrics.
+```csv
+celebrity,professional,theme,styles,order
+Ezra Frech,Daniella Karagach,Semifinal,Quickstep; Jive,
+Harry Shum Jr.,Jenna Johnson,Semifinal,Quickstep; Paso Doble,
+Tatyana Ali,Jan Ravnik,Semifinal,Waltz,
+```
 
-| Piece | Validation (`run_layer1.py`) | New week (`predict_upcoming.py`) |
-|---|---|---|
-| Feature building | `build_features` on all history | The same `build_features`, called through `build_upcoming_features` in `predict.py`, with placeholder rows for the unaired week |
-| Model | `RidgeModel` fit/predict | The same class |
-| Hyperparameters | Tuned on validation folds | Read from `selected_params.json` |
-| Training rows | Seasons before each test season | All weeks before the target week |
-| Metrics (`evaluate.py`) | Yes | No (no actual scores yet) |
+Order announced (same file, `order` filled):
 
-A test (`test_upcoming_features_match_training_features`) checks that the placeholder path yields exactly the same features as the training path.
+```csv
+celebrity,professional,theme,styles,order
+Ezra Frech,Daniella Karagach,Semifinal,Quickstep; Jive,3; 2
+Harry Shum Jr.,Jenna Johnson,Semifinal,Quickstep; Paso Doble,1; 1
+Tatyana Ali,Jan Ravnik,Semifinal,Waltz,2
+```
+
+Rules:
+- `celebrity`: matched by name to the season's couples. Week-1 couples are not supported.
+- `theme`: one value for every row.
+- `styles`: every dance the couple performs, separated by `;`.
+- `order`: the couple's position in each dance's round, in the same `;` layout as `styles`. Round 1 is
+  everyone's first dance, round 2 the couples with a second dance. Each round must be numbered
+  1..n with no repeats. Fill it for every couple or leave the column out.
 
 ## 6. Tests
 
 ```sh
 python -m pytest tests -q
 ```
-
-Covers leakage (features and fitted statistics use only earlier data, splits never mix seasons), the LMM's prediction independence from the target score, the pairwise-accuracy tie handling, and the training/prediction feature match.

@@ -126,7 +126,10 @@ TABLES = [
             couple_id INTEGER REFERENCES couples,
             primary_dance_style_id INTEGER REFERENCES primary_dance_styles,
             primary_song_id INTEGER REFERENCES primary_songs,
-            eliminated BOOLEAN
+            eliminated BOOLEAN,
+            round INTEGER,
+            running_order INTEGER,
+            round_size INTEGER
         )
         """,
     ),

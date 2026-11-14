@@ -17,6 +17,7 @@ class Config:
     features: dict[str, tuple[str, ...]]
     lgbm_grid: dict[str, list]
     main_model: str
+    order_model: str
     ridge_alphas: tuple[float, ...]
     score_min: float
     score_max: float
@@ -42,6 +43,7 @@ def load_config(path: Path | str | None = None) -> Config:
         features={k: tuple(v) for k, v in model["feature_sets"].items()},
         lgbm_grid=dict(model["lgbm"]),
         main_model=model["main"],
+        order_model=model["order"],
         ridge_alphas=tuple(model["ridge_alphas"]),
         score_min=model["score_min"],
         score_max=model["score_max"],
