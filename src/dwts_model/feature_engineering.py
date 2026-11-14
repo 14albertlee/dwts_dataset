@@ -1,9 +1,12 @@
 import pandas as pd
 
 from .categories import (
+    CELEB_GROUPS,
+    CELEB_REFERENCE,
     ONEHOT_STYLES,
     THEME_DEFAULT,
     THEME_RULES,
+    celebrity_group,
     normalize_style,
     slug,
     style_difficulty,
@@ -80,6 +83,47 @@ def build_order_features(p: pd.DataFrame) -> pd.DataFrame:
     cols = _order_columns(p["running_order"], p["round_size"])
     keys = ["season", "week", "couple_id"]
     return cols.groupby([p[k] for k in keys]).mean()
+
+
+def build_celebrity_features(couple_info: pd.DataFrame) -> pd.DataFrame:
+    """Celebrity background indicators per (season, couple_id), from `notability` (3.4).
+
+    Known before the season starts. The reference group (actor) is omitted.
+    """
+    group = couple_info["notability"].map(celebrity_group)
+    out = couple_info[["season", "couple_id"]].copy()
+    for g in CELEB_GROUPS:
+        if g != CELEB_REFERENCE:
+            out[f"celeb_{g}"] = (group == g).astype(float).to_numpy()
+    return out.drop_duplicates(["season", "couple_id"]).reset_index(drop=True)
+
+
+def build_pro_history(weekly: pd.DataFrame, couple_pros: pd.DataFrame, k: float) -> pd.DataFrame:
+    """Pro partner history per (season, couple_id), from earlier seasons only (3.2).
+
+    `pro_prior_dev` is the pro's mean deviation from the week's field mean over all couple-weeks
+    in seasons before the row's season, shrunk toward 0 as mean * n / (n + k). `pro_prior_n` is
+    that count n. Pros with no earlier season get 0 for both.
+    """
+    w = weekly[["season", "week", "couple_id", "score"]].copy()
+    w["dev"] = w["score"] - w.groupby(["season", "week"])["score"].transform("mean")
+    w = w.merge(couple_pros, on=["season", "couple_id"])
+    totals = (
+        w.groupby(["professional_id", "season"])["dev"].agg(["sum", "count"]).reset_index()
+        .sort_values("season")
+    )
+    totals[["cum_sum", "cum_n"]] = totals.groupby("professional_id")[["sum", "count"]].cumsum()
+
+    target = couple_pros[["season", "couple_id", "professional_id"]].sort_values("season")
+    out = pd.merge_asof(
+        target, totals[["season", "professional_id", "cum_sum", "cum_n"]],
+        on="season", by="professional_id", allow_exact_matches=False,
+    )
+    n = out["cum_n"].fillna(0)
+    mean = (out["cum_sum"] / out["cum_n"]).fillna(0)
+    out["pro_prior_dev"] = mean * n / (n + k) if k > 0 else mean
+    out["pro_prior_n"] = n
+    return out[["season", "couple_id", "pro_prior_dev", "pro_prior_n"]].reset_index(drop=True)
 
 
 

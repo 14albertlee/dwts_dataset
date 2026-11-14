@@ -61,7 +61,7 @@ Reorder section 3 by what this shows. The order below is the default.
     - The train/predict feature-match test needs an explicit exception for the order features, plus a test that the base-rate path yields the expected constants.
   - **Uncertainty (Monte Carlo, section 4):** in pre-show mode, sample random permutations of the order in each simulated episode and apply the order coefficients. The unknown order is a real ±0.13 source of spread per couple. In announced mode, use the given order.
 - **Also check for Layer 2:** order may affect fan votes too (later performances may be more memorable).
-- **Result (validation 26-32, `scripts/run_order_experiment.py`):** announced-order mode lowers RMSE 0.692 to 0.678 (6 of 7 seasons; -0.013 without the best season; bootstrap 95% CI [-0.025, -0.003]); pair accuracy is flat (+0.001); shuffling the order is worse than no order, so the signal is real. Base-rate mode gives no gain and slightly lower pair accuracy (-0.005, 0 of 7 seasons), so one model for both modes fails the base-rate condition. `order_first`, `order_last` and `order_frac_sq` add nothing over `order_frac`.
+- **Result (validation 26-32, `scripts/experiments/run_order_experiment.py`):** announced-order mode lowers RMSE 0.692 to 0.678 (6 of 7 seasons; -0.013 without the best season; bootstrap 95% CI [-0.025, -0.003]); pair accuracy is flat (+0.001); shuffling the order is worse than no order, so the signal is real. Base-rate mode gives no gain and slightly lower pair accuracy (-0.005, 0 of 7 seasons), so one model for both modes fails the base-rate condition. `order_first`, `order_last` and `order_frac_sq` add nothing over `order_frac`.
 - **Decision: keep `order_frac` as a separate announced-order model** (`ridge_main_order`, feature set `main_order`). Pre-show predictions keep using `ridge_main_prev_bottom3`. `predict_upcoming.py` picks the model by whether the schedule has an `order` column. Pro merge note: "Valentin" and "Val" Chmerkovskiy are now one `professional_id`.
 
 ### 3.2 Pro partner history
@@ -73,6 +73,12 @@ Reorder section 3 by what this shows. The order below is the default.
   3. A random intercept per pro in the existing LMM.
   4. One-hot `professional_id` with Ridge (try a stronger alpha). Pros new to a test season get the all-zero baseline.
 - **Confounding:** producers assign pros to celebrities non-randomly, so a pro effect partly reflects partner quality. Report whether it survives with `running_mean` in the model, and look at weeks 2-3 separately. The value is likely to be concentrated there.
+- **Implementation:** `build_pro_history` in `feature_engineering.py` (`pro_prior_dev`, `pro_prior_n`; pro per couple from `load_couple_info`), experiment in `scripts/experiments/run_pro_experiment.py` (k and alpha tuned jointly on pooled validation MAE; predictions in `outputs/layer1/pro_experiment_*.csv`).
+- **Result (validation 26-32, vs `ridge_main_prev_bottom3` at RMSE 0.692, pooled pair accuracy 0.789; 91% of validation rows have earlier-season pro history):**
+  - `pro_prior_dev`: validation MAE improves monotonically as k grows (k = 0 to 160), i.e. the tuning itself pushes toward no feature. At k = 160: RMSE 0.693 (+0.001, better in 3 of 7 seasons), pooled pair accuracy -0.008 (0 of 7 seasons better; bootstrap 95% CI [-0.015, -0.002]). Weeks 2-3 are no better (pair accuracy -0.013).
+  - One-hot `professional_id` (alpha re-tuned, picked 100): RMSE 0.695, pair accuracy -0.023 (1 of 7 seasons), Spearman 0.615 vs 0.683. Worse in weeks 2-3 (RMSE +0.041).
+  - **Confounding:** the in-sample `pro_prior_dev` coefficient is about 1.5 points per point without the couple's own history and falls to about 0.5 with `prev_score` and `running_mean`. Most of the pro signal is the couple's own level, which the main model already has from week 2 on; what remains does not transfer to new seasons.
+- **Decision: drop.** Encoding (2) is skipped because (1) did not help, as planned. (3) (pro random intercept in the LMM) is not run: (1) and (4) already bracket it (pooled shrunk mean vs unshrunk per-pro fixed effects) and both fail. Revisit the pro only for the week-1 model, where the couple has no own history.
 
 ### 3.3 Judge panel effects (replaces "judge experience")
 - **Why the original idea is weak here:** the core panel barely changes (Bruno Tonioli and Carrie Ann Inaba throughout, Len Goodman to S31, Derek Hough from S29). Panel experience is therefore close to a plain time trend. A season-level shift is also already absorbed by `prev_score` and `running_mean` from the same season. What this model cannot see is a **change in the panel between the history weeks and the target week**.
@@ -86,6 +92,13 @@ Reorder section 3 by what this shows. The order below is the default.
 - **Data work first:** `celebrities.notability` has about 270 distinct free-text values, most used once. Map them to a few levels with keyword rules in `categories.py`, the same pattern as for themes, and add a test for the mapping.
 - **Levels should reflect the likely dance ability, not fame type:** e.g., `movement_trained` (gymnast, figure skater, ice dancer, dancer, Broadway, singer-dancer), `athlete_other`, `actor`, `musician`, `reality_social`, `other`. Merge rare levels.
 - **Expectation:** helps in weeks 2-3 at most, since the couple's own scores dominate later. Its main use is probably the week-1 model (MODELING_PLAN §4.6), so build the mapping once and reuse it there.
+- **Implementation:** `celebrity_group` / `CELEB_RULES` in `categories.py` (6 levels, first match wins; tested in `tests/test_celebrity_groups.py`), `build_celebrity_features` in `feature_engineering.py` (indicators, reference `actor`), notability from `load_couple_info`. Experiment: `scripts/experiments/run_celebrity_experiment.py`, predictions in `outputs/layer1/celebrity_experiment_*.csv`.
+- **Levels (422 celebrities, 267 distinct values):** `movement_trained` 67 (gymnasts, skaters, dancers, Broadway, cheer, wrestlers, fitness instructors, choreographed pop groups such as NSYNC or Fifth Harmony), `athlete_other` 86, `musician` 62, `actor` 150 (incl. comedians), `reality_social` 68 (reality TV, social media, models), `other` 55 (hosts, journalists, chefs, politicians, business). Mean week-1 deviation from the field: +0.63, -0.13, +0.16, -0.06, 0.00, -0.55. The gap fades with weeks but persists (weeks 4+: +0.39 ... -0.36).
+- **Result (validation 26-32, vs `ridge_main_prev_bottom3`):**
+  - `celeb_onehot`: RMSE 0.692 to 0.689 (5 of 7 seasons; -0.002 without the best season; bootstrap CI [-0.010, +0.003]), but pooled pair accuracy -0.006 (4 of 7) and Spearman 0.683 to 0.664. Weeks 2-3 get slightly worse (dRMSE +0.003, dPair -0.011), against the expectation. The fitted `movement_trained` coefficient is a stable +0.15 per judge across folds.
+  - `celeb_onehot_decay` (adds indicators / (week - 1)): RMSE 0.687, pair accuracy -0.007, same pattern.
+  - Week 1 alone (no own history; group means from earlier seasons): pair accuracy 0.573 vs 0.5 for a constant, Spearman 0.23, RMSE 0.957 vs 0.975.
+- **Decision: drop from the main model** (the RMSE gain is within noise and the ranking metrics get worse). Keep the mapping for the week-1 model, where it has modest signal.
 
 ### 3.5 Cheap format features (test as one batch, then prune)
 - `n_couples_remaining` (known before the episode).
@@ -97,6 +110,23 @@ Reorder section 3 by what this shows. The order below is the default.
 - Use the existing implementation and grid. Don't add XGBoost unless LightGBM is competitive. On this data size the two will behave about the same.
 - Run on the main feature set plus anything kept from 3.1-3.5. Try `professional_id` and style as native categoricals.
 - Small data favors Ridge. Judge on pair accuracy and Spearman, not just RMSE, and inspect SHAP directions (week, `running_mean`, `prev_score`).
+- **Implementation:** `scripts/experiments/run_lgbm_experiment.py` (existing `LGBMModel` and `[model.lgbm]` grid, params tuned per variant on pooled validation MAE; predictions in `outputs/layer1/lgbm_experiment_*.csv` and `lgbm_order_experiment_validate.csv`). Every variant picked `target = "delta"`, 4 leaves, 400 trees. Style as a categorical is the couple's first dance of the week. SHAP is LightGBM's built-in TreeSHAP (`pred_contrib=True`).
+- **Result (validation 26-32):**
+
+  | model | RMSE | pair acc | Spearman |
+  |---|---|---|---|
+  | `ridge_main` | **0.692** | **0.789** | **0.683** |
+  | `lgbm_main` | 0.708 | 0.761 | 0.630 |
+  | 50/50 blend | 0.695 | 0.778 | 0.662 |
+  | `ridge_main_order` (announced) | 0.678 | 0.790 | 0.687 |
+  | `lgbm_order` (announced) | 0.687 | 0.782 | 0.673 |
+  | 50/50 blend (announced) | **0.676** | 0.786 | 0.678 |
+
+  - `lgbm_main` vs Ridge: pair accuracy -0.028 (1 of 7 seasons better; bootstrap 95% CI [-0.040, -0.016]), RMSE +0.016 (3 of 7). Worse in both weeks 2-3 and weeks 4+. The blend still loses pair accuracy (1 of 7; CI [-0.018, -0.003]). The announced-order blend's RMSE gain (-0.001) is noise, and its pair accuracy is worse.
+  - Native categoricals (vs `lgbm_main`): style as a categorical instead of one-hots changes nothing (4 of 7 either way, ~0 without the best season). `professional_id` is noise (4 of 7; weeks 2-3 RMSE +0.024).
+  - Ridge rejects re-tested in trees (vs `lgbm_main`): `pro_prior_dev` (k = 40) passes the rule *within LightGBM* (RMSE 6 of 7, pair accuracy 5 of 7, holds without the best season), and `prev_rank` + `prev_dev` improves pair accuracy in 7 of 7 (+0.009; CI [-0.000, +0.020]) but not RMSE. Celebrity group and all theme categories lower RMSE slightly but not pair accuracy. **None of these closes the gap to Ridge**: the best variant (`lgbm_pro_dev`, 0.700 / 0.770) is still 0.019 behind in pair accuracy.
+  - SHAP (last fold, delta target, so `prev_score` also enters 1:1 outside the trees): `prev_score` (negative on the delta: mean reversion), `running_mean` (+), and week (+) dominate, then `style_contemporary` (+) and `prev_bottom3` (+). The directions match the Ridge coefficients; the trees don't find a new structure.
+- **Decision: drop LightGBM and the blend.** Ridge stays the main model in both modes. Don't add XGBoost (LightGBM isn't competitive). The tree-only gains from `pro_prior_dev` and `prev_rank`/`prev_dev` don't transfer to the Ridge model (3.2 and section 0), so they don't reopen those decisions.
 
 ### 3.7 Recency weighting (lowest priority)
 - Weight training rows by `exp(-lambda * (S_test - s))` via `fit(X, y, ridge__sample_weight=w)`. Tune lambda on the validation folds.

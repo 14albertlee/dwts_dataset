@@ -62,6 +62,24 @@ def load_season_couples(cfg: Config) -> pd.DataFrame:
         con.close()
 
 
+_COUPLE_INFO_QUERY = """
+SELECT DISTINCT p.season, c.couple_id, c.professional_id, ce.notability
+FROM {schema}.performances p
+JOIN {schema}.couples c USING (couple_id)
+LEFT JOIN {schema}.celebrities ce USING (celebrity_id)
+WHERE p.week IS NOT NULL AND c.professional_id IS NOT NULL
+"""
+
+
+def load_couple_info(cfg: Config) -> pd.DataFrame:
+    """One row per (season, couple_id) with the couple's professional_id and celebrity notability."""
+    con = duckdb.connect(str(cfg.db_path), read_only=True)
+    try:
+        return con.execute(_COUPLE_INFO_QUERY.format(schema=cfg.schema)).df()
+    finally:
+        con.close()
+
+
 def load_performance_context(cfg: Config) -> pd.DataFrame:
     """One row per performance with its week theme text and dance style name."""
     con = duckdb.connect(str(cfg.db_path), read_only=True)

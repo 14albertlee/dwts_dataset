@@ -38,7 +38,15 @@ python scripts/run_layer1.py --mode validate                    # also LightGBM 
 python scripts/score_predictions.py --mode validate             # re-score saved predictions
 python scripts/plot_layer1.py --mode validate                   # diagnostics image
 python scripts/plot_double_lift.py --mode validate              # double lift chart
-python scripts/run_order_experiment.py                          # running-order experiment (3.1)
+```
+
+One-off experiments from `docs/LAYER1_NEXT_EXPERIMENTS.md` live in `scripts/experiments/` (validation seasons only):
+
+```sh
+python scripts/experiments/run_order_experiment.py              # running order (3.1)
+python scripts/experiments/run_pro_experiment.py                # pro partner history (3.2)
+python scripts/experiments/run_celebrity_experiment.py          # celebrity background (3.4)
+python scripts/experiments/run_lgbm_experiment.py               # LightGBM with kept features (3.6)
 ```
 
 ## 4. Score the holdout (seasons 33-35)

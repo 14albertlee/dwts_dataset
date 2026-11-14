@@ -145,6 +145,29 @@ def test_upcoming_features_match_training_features():
     assert up["score"].isna().all()
 
 
+def test_pro_history_uses_only_earlier_seasons_and_shrinks():
+    from dwts_model.feature_engineering import build_pro_history
+
+    weekly = _weekly(seasons=range(1, 4))
+    # Pro 7 partners the first couple each season; every other couple has its own new pro.
+    couple_pros = weekly[["season", "couple_id"]].drop_duplicates()
+    couple_pros["professional_id"] = np.where(couple_pros["couple_id"] % 100 == 0, 7, couple_pros["couple_id"])
+    k = 5.0
+    out = build_pro_history(weekly, couple_pros, k).set_index(["season", "couple_id"])
+
+    dev = weekly["score"] - weekly.groupby(["season", "week"])["score"].transform("mean")
+    prior = dev[(weekly["season"] < 3) & (weekly["couple_id"] % 100 == 0)]
+    row = out.loc[(3, 300)]
+    assert row["pro_prior_n"] == len(prior)
+    assert np.isclose(row["pro_prior_dev"], prior.mean() * len(prior) / (len(prior) + k))
+    assert out.loc[(1, 100), "pro_prior_dev"] == 0 and out.loc[(3, 301), "pro_prior_n"] == 0
+
+    changed = weekly.copy()
+    changed.loc[changed["season"] == 3, "score"] = 1.0
+    again = build_pro_history(changed, couple_pros, k).set_index(["season", "couple_id"])
+    pd.testing.assert_frame_equal(out, again)
+
+
 def test_baseline_statistics_use_only_training_data():
     df = build_features(_weekly())
     train = df[df["season"] < 6]

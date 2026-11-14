@@ -1,6 +1,6 @@
 """Experiment 3.1: within-night running order features on top of the main model.
 
-    python scripts/run_order_experiment.py
+    python scripts/experiments/run_order_experiment.py
 
 Validation seasons only. Each variant is fit on the actual order and scored in two modes:
 base-rate (order features replaced by random-order expectations) and announced (actual order).
@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
 from dwts_model.config import load_config  # noqa: E402
 from dwts_model.data import load_performance_context, load_weekly_scores  # noqa: E402

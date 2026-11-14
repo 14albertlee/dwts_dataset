@@ -71,5 +71,38 @@ ONEHOT_STYLES = [
 ]
 
 
+# Celebrity background by likely dance ability, not fame type (3.4). Ordered: first match wins,
+# so "Glee actress & dancer" is movement_trained and "Actor & singer" is musician.
+CELEB_RULES: list[tuple[str, str]] = [
+    ("movement_trained",
+     r"gymnast|figure skater|ice dancer|dancer|broadway|cheer|las vegas entertainer|high school musical|"
+     r"wwe|wrestler|peloton|yoga|fitness|"
+     # pop groups with choreographed stage shows
+     r"nsync|backstreet|fifth harmony|big time rush|98 degrees|new kids|boyz ii men|\br5\b|spice girls|"
+     r"pussycat dolls|pentatonix"),
+    ("athlete_other",
+     r"\bnfl\b|\bnba\b|\bmlb\b|\bnhl\b|olympic|paralympic|boxer|\bufc\b|mixed martial|tennis|swimmer|jockey|"
+     r"race car|nascar|indy|snowboarder|rodeo|bull rider|soccer|basketball|bodybuilder|savannah bananas"),
+    ("musician", r"singer|rapper|musician|violinist|frontman"),
+    ("actor", r"actor|actress|comedian"),
+    ("reality_social",
+     r"reality|bachelor|cast member|social media|youtube|\bvine\b|jersey shore|contestant|\bmodel\b|supermodel|"
+     r"jackass|love thy nader|miss usa"),
+]
+CELEB_DEFAULT = "other"  # hosts, journalists, chefs, politicians, business people
+CELEB_GROUPS = [c for c, _ in CELEB_RULES] + [CELEB_DEFAULT]
+CELEB_REFERENCE = "actor"  # largest group; omitted from the indicators
+
+
+def celebrity_group(notability: str | None) -> str:
+    if notability is None or pd.isna(notability):
+        return CELEB_DEFAULT
+    text = notability.lower()
+    for group, pattern in CELEB_RULES:
+        if re.search(pattern, text):
+            return group
+    return CELEB_DEFAULT
+
+
 def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
