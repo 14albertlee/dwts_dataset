@@ -1,11 +1,11 @@
-"""Build a queryable DuckDB database from the csv files in dwts_dataset/.
+"""Build a queryable DuckDB database from the csv files in data/raw/.
 
 Run from the repository root (after regenerating the csvs with
-`parse_scores_json_to_tables.py`):
+`scripts/parse_scores_json_to_tables.py`):
 
-    python build_duckdb.py
+    python scripts/build_duckdb.py
 
-This (re)creates `dwts_dataset.duckdb` at the repo root, with one table per
+This (re)creates `data/database/dwts_dataset.duckdb`, with one table per
 csv, primary keys on every `<table>_id` column, foreign keys wired up
 between the fact tables (`couples`, `performances`, `scores`) and their
 dimension tables, and unique constraints on each dimension table's natural
@@ -13,7 +13,7 @@ key (e.g. `celebrities.celebrity`, `couples.(celebrity_id, professional_id)`),
 so loading it also double-checks that the csvs have no duplicate dimension
 rows, and you can query the dataset directly with SQL, e.g.:
 
-    duckdb dwts_dataset.duckdb -c "
+    duckdb data/database/dwts_dataset.duckdb -c "
         SELECT c.celebrity, p.professional, avg(s.judge_score) AS avg_score
         FROM scores s
         JOIN performances perf ON perf.performance_id = s.performance_id
@@ -30,8 +30,9 @@ import os
 
 import duckdb
 
-DATASET_DIR = "dwts_dataset"
-DB_PATH = "dwts_dataset.duckdb"
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATASET_DIR = os.path.join(REPO_ROOT, "data", "raw")
+DB_PATH = os.path.join(REPO_ROOT, "data", "database", "dwts_dataset.duckdb")
 
 # Each entry is (table_name, create_table_sql). Order matters: a table can
 # only reference primary keys of tables created earlier in this list.
@@ -144,6 +145,7 @@ TABLES = [
 
 
 def main():
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     if os.path.exists(DB_PATH):
         os.remove(DB_PATH)
 

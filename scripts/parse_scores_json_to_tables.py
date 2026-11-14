@@ -1,14 +1,14 @@
-"""Parse dwts_scrapy/scores.json into the normalized tables in dwts_dataset/.
+"""Parse dwts_scrapy/scores.json into the normalized tables in data/raw/.
 
 This is a straight-line script conversion of the original
 `parse_scores_json_to_tables.ipynb` notebook (see git history for the
 notebook if you need the exploratory/commented-out cells). Run it from the
 repository root:
 
-    python parse_scores_json_to_tables.py
+    python scripts/parse_scores_json_to_tables.py
 
 It reads `dwts_scrapy/scores.json` and (re)writes every csv under
-`dwts_dataset/`.
+`data/raw/`.
 """
 
 import csv
@@ -18,8 +18,9 @@ import numpy as np
 import pandas as pd
 from pluralizer import Pluralizer
 
-OUTPUT_DIR = "dwts_dataset"
-SCORES_JSON = os.path.join("dwts_scrapy", "scores.json")
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUTPUT_DIR = os.path.join(REPO_ROOT, "data", "raw")
+SCORES_JSON = os.path.join(REPO_ROOT, "dwts_scrapy", "scores.json")
 
 
 def load_scores(path):
@@ -34,11 +35,12 @@ def load_scores(path):
         .assign(judge=lambda df_: df_.judge_phrase.str.strip(to_strip=" .\n").str.split(", ", expand=False))
         .assign(week=lambda df_: df_.week_title.str.extract(r'Week (\d+)'),  # NaN if no Week Theme.
                 week_theme=lambda df_: df_.week_title.str.extract(r': (.*?)$').fillna('No Theme'))
-        # "Caveman" Hustle # Argentine tango
-        .assign(michael_jackson_theme=lambda df_: df_.dance_and_theme.str.extract(r'"(.*?)"'),
-                michael_jackson_dance=lambda df_: df_.dance_and_theme.str.extract(r'(?:".*?")?(.*?)$'),
-                dance_style=lambda df_: np.where(df_.dance_and_theme.notna(), df_.michael_jackson_dance, df_.dance_style))
-        .drop(columns=['michael_jackson_dance'])
+        # "Caveman" Hustle -> Hustle
+        .assign(dance_style=lambda df_: np.where(
+            df_.dance_and_theme.notna(),
+            df_.dance_and_theme.str.extract(r'(?:".*?")?(.*?)$')[0],
+            df_.dance_style,
+        ))
         .assign(dance_styles=lambda df_: df_.dance_style.str.split("---"),
                 primary_dance_style=lambda df_: df_.dance_styles.apply(lambda x: x[0] if isinstance(x, list) else np.nan))
         .assign(primary_dance_style=lambda df_: df_.primary_dance_style.str.replace("&", '').str.strip().str.title())
@@ -359,6 +361,7 @@ def write_scores_table(df_final):
 
 
 def main():
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
     df = load_scores(SCORES_JSON)
     df = coalesce_music_columns(df)
     df_score_type = split_double_scores(df)

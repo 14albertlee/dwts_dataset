@@ -37,26 +37,26 @@ cd dwts_scrapy
 scrapy crawl dwts_scores -O scores.json
 ```
 
-There is then a parser script, `parse_scores_json_to_tables.py`, which reads `dwts_scrapy/scores.json` and (re)writes the output csv files in `dwts_dataset`. Run it from the repository root:
+There is then a parser script, `scripts/parse_scores_json_to_tables.py`, which reads `dwts_scrapy/scores.json` and (re)writes the output csv files in `data/raw/`. Run it from the repository root:
 
 ```sh
-python parse_scores_json_to_tables.py
+python scripts/parse_scores_json_to_tables.py
 ```
 
-Within the `dwts_dataset` each `csv` is a table. Primary keys are the first column (e.g., `performance_id`). Foreign keys are named with `<table_name>_id` (e.g., primary_dance_style_id).
+Within `data/raw/` each `csv` is a table. Primary keys are the first column (e.g., `performance_id`). Foreign keys are named with `<table_name>_id` (e.g., primary_dance_style_id).
 
 ### Querying the dataset with DuckDB
 
-`build_duckdb.py` loads all the csvs in `dwts_dataset/` into a single queryable [DuckDB](https://duckdb.org/) database file, `dwts_dataset.duckdb`, with the primary/foreign keys above declared as real `PRIMARY KEY`/`FOREIGN KEY` constraints (so loading it also double-checks the referential integrity of the csvs). Run it from the repository root after regenerating the csvs:
+`scripts/build_duckdb.py` loads all the csvs in `data/raw/` into a single queryable [DuckDB](https://duckdb.org/) database file, `data/database/dwts_dataset.duckdb`, with the primary/foreign keys above declared as real `PRIMARY KEY`/`FOREIGN KEY` constraints (so loading it also double-checks the referential integrity of the csvs). Run it from the repository root after regenerating the csvs:
 
 ```sh
-python build_duckdb.py
+python scripts/build_duckdb.py
 ```
 
 Then query it with the `duckdb` CLI or Python, e.g.:
 
 ```sh
-duckdb dwts_dataset.duckdb -c "
+duckdb data/database/dwts_dataset.duckdb -c "
 SELECT celebrity, avg(judge_score) AS avg_score
 FROM scores
 JOIN performances USING (performance_id)
@@ -68,7 +68,7 @@ LIMIT 5;
 "
 ```
 
-`dwts_dataset.duckdb` itself is not committed to the repo (it's a regeneratable build artifact, like the csvs it's built from); run `build_duckdb.py` locally to get one.
+`data/database/dwts_dataset.duckdb` itself is not committed to the repo (it's a regeneratable build artifact, like the csvs it's built from); run `scripts/build_duckdb.py` locally to get one.
 
 Note that this is set up as a repo that can work with `repo2docker`.  You can run it direcltly on mybinder via this link [![Binder](https://mybinder.org/badge_logo.svg)](https://mybinder.org/v2/gh/howisonlab/dwts_dataset.git/HEAD)
 

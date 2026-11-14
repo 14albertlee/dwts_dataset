@@ -12,5 +12,6 @@
         "*.csv": "duckdb.dataFileViewer",
         "*.tsv": "duckdb.dataFileViewer",
         "*.xlsx": "duckdb.dataFileViewer"
-    }
+    },
+    "duckdb.defaultDatabase": "dwts_db_compat"
 }
