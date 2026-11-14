@@ -127,6 +127,25 @@ def build_pro_history(weekly: pd.DataFrame, couple_pros: pd.DataFrame, k: float)
 
 
 
+def build_lmm_frame(
+    weekly: pd.DataFrame, context: pd.DataFrame, couple_info: pd.DataFrame | None = None
+) -> pd.DataFrame:
+    """All couple-weeks, first weeks included, with schedule-known context for the CrossedLMM.
+
+    No own-history features: the LMM gets the couple's level from its random effects, conditioned
+    on earlier weeks at prediction time. Adds `professional_id` and celebrity-group indicators
+    (known before the season) when `couple_info` is given, and `week_sq`.
+    """
+    keys = ["season", "week", "couple_id"]
+    df = weekly.merge(context, on=keys, how="left")
+    if couple_info is not None:
+        info = couple_info.drop_duplicates(["season", "couple_id"])
+        df = df.merge(info[["season", "couple_id", "professional_id"]], on=["season", "couple_id"], how="left")
+        df = df.merge(build_celebrity_features(info), on=["season", "couple_id"], how="left")
+    df["week_sq"] = df["week"].astype(float) ** 2
+    return df.sort_values(keys).reset_index(drop=True)
+
+
 def build_features(weekly: pd.DataFrame, context: pd.DataFrame | None = None) -> pd.DataFrame:
     """Add Phase 1/2 features and drop each couple's first week.
 

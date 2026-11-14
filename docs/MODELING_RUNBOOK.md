@@ -47,6 +47,7 @@ python scripts/experiments/run_order_experiment.py              # running order 
 python scripts/experiments/run_pro_experiment.py                # pro partner history (3.2)
 python scripts/experiments/run_celebrity_experiment.py          # celebrity background (3.4)
 python scripts/experiments/run_lgbm_experiment.py               # LightGBM with kept features (3.6)
+python scripts/experiments/run_lmm_experiment.py                # crossed-effects LMM + score distribution (3.8, ~20 min)
 ```
 
 ## 4. Score the holdout (seasons 33-35)
@@ -67,7 +68,7 @@ There are two models:
 | Run when | Schedule has `order`? | Model | Output |
 |---|---|---|---|
 | Theme and dances are known | no | `ridge_main_prev_bottom3` | printed; `--save-file` writes `<schedule>_noorder.csv` |
-| Running order is announced | yes | `ridge_main_order` (better) | printed; `--save-file` writes `<schedule>_order.csv` |
+| Running order is announced | yes | `ridge_main_order` (better), shown next to the pre-show model | printed, both models in the `--backtest` layout; `--save-file` writes `<schedule>_order.csv` |
 
 ```sh
 # 1. template of couples still competing (optional if Claude writes the CSV from the prompt)
@@ -81,7 +82,21 @@ python scripts/predict_upcoming.py --schedule schedule.csv
 ```
 
 Optional flags: `--theme "Disney Night"` (instead of the column), `--coefs` (print coefficients),
-`--save-file [PATH]` (see below).
+`--judges N` (judges scoring that week; default is last week's panel size, so set it for guest-judge
+weeks), `--draws N` (Monte Carlo draws, default 10000), `--save-file [PATH]` (see below).
+
+### Reading the output
+
+Besides the predicted mean score, each couple gets, from the Ridge mean plus a Gaussian spread
+(`src/dwts_model/judge_distribution.py`, docs/LAYER1_NEXT_EXPERIMENTS.md 3.8):
+- `range80`: 80% range of the couple's mean score (low-high).
+- `p_lowest`: probability the couple has the lowest judge total that night. Totals are simulated per
+  judge, rounded to integers, and summed, so ties happen at realistic rates; every couple tied for
+  lowest counts, so the column can sum to a little over 1.
+
+These are judge-score probabilities only. They are not elimination probabilities: fan votes come in
+with Layer 2 and the combination. The spread comes from the same model's out-of-sample residuals in
+earlier seasons, so the pre-show model's spread already includes the unknown running order.
 
 By default predictions are only printed. `--save-file` also writes the CSV: bare, it goes to
 `prediction_files/outputs/`; `PATH` can be another directory or a `.csv` file. The file is named
@@ -102,7 +117,8 @@ python scripts/predict_upcoming.py --backtest --season 34 --week 6
 
 Reads the theme, dances and running order from the database, trains only on weeks before it, and
 prints both models (pre-show and order-announced) next to the actual scores, with RMSE and pair
-accuracy. Add `--save-file` to write `S<season>W<week>_backtest.csv`. Week 1 is not supported.
+accuracy and each model's `p_low_*` (probability of the lowest judge total, using the week's actual
+number of judge scores). Add `--save-file` to write `S<season>W<week>_backtest.csv`. Week 1 is not supported.
 
 ### Schedule CSV
 

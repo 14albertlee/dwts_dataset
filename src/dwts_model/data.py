@@ -80,6 +80,23 @@ def load_couple_info(cfg: Config) -> pd.DataFrame:
         con.close()
 
 
+_JUDGE_SCORES_QUERY = """
+SELECT p.season, p.week, p.couple_id, p.performance_id, s.judge_id, s.judge_score
+FROM {schema}.performances p
+JOIN {schema}.scores s USING (performance_id)
+WHERE s.judge_score IS NOT NULL AND s.judge_score > 0 AND p.week IS NOT NULL
+"""
+
+
+def load_judge_scores(cfg: Config) -> pd.DataFrame:
+    """One row per judge score, with the same filters as `load_weekly_scores`."""
+    con = duckdb.connect(str(cfg.db_path), read_only=True)
+    try:
+        return con.execute(_JUDGE_SCORES_QUERY.format(schema=cfg.schema)).df()
+    finally:
+        con.close()
+
+
 def load_performance_context(cfg: Config) -> pd.DataFrame:
     """One row per performance with its week theme text and dance style name."""
     con = duckdb.connect(str(cfg.db_path), read_only=True)

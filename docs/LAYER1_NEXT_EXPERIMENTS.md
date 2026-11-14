@@ -5,7 +5,7 @@
 - **Current main model:** `ridge_main_prev_bottom3` (validation 26-32: RMSE 0.692, Spearman 0.682, pair accuracy 0.807).
 - **It is effectively tied with `ridge_style_onehot_theme_emotional`.** Its pair-accuracy gain comes almost entirely from season 31 (+0.031). In the other six seasons the change is between -0.001 and +0.006, and RMSE is slightly worse in 4 of 7 seasons. In contrast, style + theme over `phase1` lowered RMSE in all 7 seasons. That is what a real gain looks like here.
 - Already tested with no gain: `prev_rank`, `prev_dev`, and their combination (`main_prev_rank`, `main_prev_standing`). Don't re-run them as new experiments.
-- Already implemented: LightGBM (`--models lgbm`) and the mixed-effects model (`--models lmm`).
+- Already implemented: LightGBM (`--models lgbm`) and the mixed-effects model (`--models lmm`). A crossed-effects LMM (couple, pro, season, night) was tested in 3.8 and not adopted; Ridge stays the main model, with a Gaussian spread for the predictive distribution.
 
 ## 1. Rules for every experiment
 
@@ -59,7 +59,7 @@ Reorder section 3 by what this shows. The order below is the default.
     - Allow only all-or-none per week. If some couples have an order and others don't, stop with an error rather than mix the modes.
     - `build_upcoming_features` fills either the base-rate values or the given order. Print which mode was used, and include it in the output file name.
     - The train/predict feature-match test needs an explicit exception for the order features, plus a test that the base-rate path yields the expected constants.
-  - **Uncertainty (Monte Carlo, section 4):** in pre-show mode, sample random permutations of the order in each simulated episode and apply the order coefficients. The unknown order is a real ±0.13 source of spread per couple. In announced mode, use the given order.
+  - **Uncertainty (Monte Carlo, section 4):** the pre-show model has no order features, so the unknown order (a real ±0.13 per couple) is already in its out-of-sample residuals and therefore in its Gaussian spread; no permutation sampling is needed. In announced mode, use `ridge_main_order` and its own residual spread.
 - **Also check for Layer 2:** order may affect fan votes too (later performances may be more memorable).
 - **Result (validation 26-32, `scripts/experiments/run_order_experiment.py`):** announced-order mode lowers RMSE 0.692 to 0.678 (6 of 7 seasons; -0.013 without the best season; bootstrap 95% CI [-0.025, -0.003]); pair accuracy is flat (+0.001); shuffling the order is worse than no order, so the signal is real. Base-rate mode gives no gain and slightly lower pair accuracy (-0.005, 0 of 7 seasons), so one model for both modes fails the base-rate condition. `order_first`, `order_last` and `order_frac_sq` add nothing over `order_frac`.
 - **Decision: keep `order_frac` as a separate announced-order model** (`ridge_main_order`, feature set `main_order`). Pre-show predictions keep using `ridge_main_prev_bottom3`. `predict_upcoming.py` picks the model by whether the schedule has an `order` column. Pro merge note: "Valentin" and "Val" Chmerkovskiy are now one `professional_id`.
@@ -133,11 +133,39 @@ Reorder section 3 by what this shows. The order below is the default.
 - Try a sliding window of the last K seasons first. It is simpler and tests the same idea.
 - Weighting reduces the effective sample size. It is worth trying only if per-season residuals show drift.
 
+### 3.8 Mixed-effects model with crossed random effects (couple, pro)
+- **Why:** partial pooling of the couple's level and the pro, and a predictive distribution (joint per night) for the Monte Carlo in section 4. The existing `LMMModel` keeps `prev_score` and `running_mean` as fixed effects, so its couple-intercept variance fits to almost 0 (SD about 0.1 vs residual 0.75) and adds nothing. A useful LMM has to get the couple's level from the random effect instead.
+- **Implementation:** `CrossedLMM` in `models.py` (REML in the lme4 parametrization with dense Henderson equations; matches statsmodels on a single intercept and recovers simulated variance components). Effects: `couple` (couple-season intercept), `couple_slope` (correlated week slope), `pro` (crossed across seasons), `season`, `night` (season x week). Prediction for (S, w) conditions on all training rows plus season S weeks before w; `predict_dist` returns the per-night joint covariance. `build_lmm_frame` keeps first weeks (the LMM can train on and predict them). Experiment: `scripts/experiments/run_lmm_experiment.py`; outputs `outputs/layer1/lmm_experiment_*.csv`. Leakage tests in `tests/test_leakage.py`.
+- **Variants:** L0 existing LMM; L1 couple + season + night with fixed week shape, theme and style one-hots (week + week² chosen over linear, MAE 0.577 vs 0.589); L2 + couple week-slope; L3 + pro; L4 + celebrity group; H hybrid = Ridge's main features + pro, season, night; L4 + `order_frac` vs `ridge_main_order`.
+- **Point result (validation 26-32, weeks 2+, same rows; non-inferiority = bootstrap 95% CI dRMSE upper < +0.005 and dPair lower > -0.005):**
+
+  | model | RMSE | pair acc | dRMSE CI upper | dPair CI lower | non-inferior |
+  |---|---|---|---|---|---|
+  | `ridge_main_prev_bottom3` | **0.692** | **0.789** | | | |
+  | L0 | 0.697 | 0.786 | +0.012 | -0.009 | no |
+  | L1 | 0.713 | 0.782 | +0.037 | -0.019 | no |
+  | L2 | 0.714 | 0.781 | +0.039 | -0.019 | no |
+  | L3 | 0.714 | 0.779 | +0.039 | -0.025 | no |
+  | L4 | 0.713 | 0.775 | +0.039 | -0.029 | no |
+  | H | 0.685 | 0.784 | +0.005 | -0.013 | no |
+  | L4 + order vs `ridge_main_order` | 0.689 vs 0.678 | 0.791 vs 0.790 | +0.030 | -0.013 | no |
+
+  - The latent-skill models (L1-L4) lose in 5 of 7 seasons on RMSE. A static couple level weights all past weeks equally; Ridge's `prev_score` tracks recent form better. The couple week-slope SD fits to about 0.01-0.04 per 5 weeks: no evidence of couple-specific improvement rates beyond the fixed week trend.
+  - Pro SD is 0.45 in L3, but only 0.085 in H, once the couple's own history is in. Most of the latent pro effect is the couple's level, as in 3.2.
+  - H's season intercept (the season's scoring level, learned from its earlier weeks) lowers RMSE but cannot change rankings; its unpenalized fixed effects cost pair accuracy.
+- **Distribution result (55 complete validation nights, weeks 2+, at least 3 couples).** Baseline: Ridge mean + Gaussian with a shared night term and a within-night term per week bucket (2-3, 4-6, 7+), estimated from out-of-sample Ridge residuals of seasons 16 to S-1. Night-block bootstrap CIs vs Ridge:
+  - Coverage of 50% / 90% intervals: Ridge 0.51 / 0.92, L1 0.50 / 0.92; both calibrated. CRPS: Ridge 0.385, L1 0.398 (CI [+0.004, +0.025], worse: the point error dominates).
+  - Ranking probabilities: L1 is slightly better on pairwise Brier (0.147 vs 0.151, CI [-0.008, 0.000]) and integer P(lowest) log loss (0.233 vs 0.244, CI [-0.025, +0.001]), not significant.
+  - **The LMM covariance adds nothing:** Ridge means with L1's covariance score the same as Ridge (CIs centred on 0 for all three metrics). L1's small ranking edge comes from its means.
+- **Integer judge totals and ties.** Draws are split into a shared performance shock and per-judge noise (within-performance judge variance from the last 5 training seasons, less the 1/12 rounding variance); each judge-dance slot is rounded and clipped to 1-10 and summed. With the Ridge distribution, tie rates per night are realistic: any tie 0.88 simulated vs 0.93 actual, tie for lowest 0.17 vs 0.13, tie in the bottom 3 0.40 vs 0.36. Fields of 3-5 couples tie too rarely (0.56 vs 0.67 any tie, 9 nights). Integer totals give better P(lowest) log loss than continuous draws for every model (Ridge 0.244 vs 0.254).
+- **Week 1 (report only):** L3 / L4 rank week-1 couples with pair accuracy 0.61 / 0.60 (Spearman 0.24 / 0.25), better than the celebrity-group-only result in 3.4 (0.57). RMSE is worse than a constant (1.18-1.21 vs 1.11) because the new season's level is unknown.
+- **Decision: keep Ridge** (`ridge_main_prev_bottom3` pre-show, `ridge_main_order` with the announced order). No LMM variant is non-inferior, and the LMM covariance does not improve on Ridge + Gaussian. **Layer 1 distribution for the Monte Carlo:** Ridge mean + Gaussian (night + within-night variance by week bucket, from earlier seasons' out-of-sample residuals of the model in use) + integer rounding as above. Keep `CrossedLMM` (L3/L4) as the candidate week-1 model. Optional later check, judged on elimination log loss once Layer 2 exists: a Ridge/L1 mean blend.
+
 ## 4. Needed for the combination layer (not optional)
 
 The Monte Carlo step (MODELING_PLAN §6.2) needs a predictive distribution, not just a point estimate:
-- Estimate the residual spread of the main model by week (and by number of couples remaining). Check the coverage of 50% and 90% intervals on the validation seasons.
-- For pre-show simulations, sample a random running order per simulated episode. Once the order is announced, use it (section 3.1).
+- **Done (3.8):** Ridge mean + Gaussian with a shared night term and a within-night term by week bucket, estimated from earlier seasons' out-of-sample residuals. Validation coverage of 50% and 90% intervals is 0.51 and 0.92. Integer judge totals are simulated by rounding per-judge draws, which reproduces realistic tie rates. Remaining: calibration tracking of `p_lowest` as new episodes air, and the Monte Carlo itself (which will reuse `forecast_night`). The sampler and spread live in `src/dwts_model/judge_distribution.py`; `predict_upcoming.py` prints `range80` and `p_lowest` per couple.
+- Pre-show uncertainty about the running order is already in the main model's residuals (it has no order features), so no separate random-order simulation is needed. Once the order is announced, use `ridge_main_order` and its own residuals.
 - Add one metric that targets eliminations: how often the couple with the lowest predicted score is in the bottom 2 of actual judge scores, by week.
 
 ## 5. Deliverables per experiment

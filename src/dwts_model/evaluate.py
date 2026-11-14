@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from scipy.stats import spearmanr
+from scipy.stats import norm, spearmanr
 
 
 def _pair_counts(actual: np.ndarray, pred: np.ndarray) -> tuple[float, int]:
@@ -73,3 +73,59 @@ def summarize(preds: pd.DataFrame, models: list[str], short_seasons=()) -> dict[
         ]
     )
     return {"overall": overall, "by_week": by_week, "by_season": by_season}
+
+
+# ---- Predictive-distribution metrics (Gaussian marginals, joint draws per night) ----
+
+
+def gaussian_scores(y: np.ndarray, mu: np.ndarray, sd: np.ndarray) -> pd.DataFrame:
+    """Per-row central-interval coverage (50%, 90%), CRPS and negative log density under N(mu, sd^2)."""
+    z = (y - mu) / sd
+    crps = sd * (z * (2 * norm.cdf(z) - 1) + 2 * norm.pdf(z) - 1 / np.sqrt(np.pi))
+    return pd.DataFrame(
+        {
+            "cover50": np.abs(z) <= norm.ppf(0.75),
+            "cover90": np.abs(z) <= norm.ppf(0.95),
+            "crps": crps,
+            "nll": -norm.logpdf(y, mu, sd),
+            "pit": norm.cdf(z),
+        }
+    )
+
+
+def pairwise_probs(actual: np.ndarray, mean: np.ndarray, cov: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """P(i beats j) and the outcome for every pair in one night with differing actual scores."""
+    i, j = np.triu_indices(len(actual), k=1)
+    keep = actual[i] != actual[j]
+    i, j = i[keep], j[keep]
+    var = np.diag(cov)[i] + np.diag(cov)[j] - 2 * cov[i, j]
+    p = norm.cdf((mean[i] - mean[j]) / np.sqrt(np.maximum(var, 1e-12)))
+    return p, (actual[i] > actual[j]).astype(float)
+
+
+def lowest_indicator(totals: np.ndarray) -> np.ndarray:
+    """Rows of draws x couples: 1 where the couple has the (possibly shared) lowest value in that draw."""
+    return (totals == totals.min(axis=-1, keepdims=True)).astype(float)
+
+
+def tie_stats(totals: np.ndarray) -> dict[str, np.ndarray]:
+    """Per draw (rows): any tie, tie for lowest, and any tie among the three lowest values."""
+    s = np.sort(totals, axis=-1)
+    d = np.diff(s, axis=-1) == 0
+    return {"any_tie": d.any(axis=-1), "bottom_tie": d[..., 0], "bottom3_tie": d[..., :2].any(axis=-1)}
+
+
+def simulate_integer_totals(
+    latent: np.ndarray, n_slots: np.ndarray, judge_sd: float, rng: np.random.Generator,
+    score_min: float = 1.0, score_max: float = 10.0,
+) -> np.ndarray:
+    """Integer judge totals from latent per-judge means (draws x couples).
+
+    Each couple gets `n_slots` judge-dance scores: latent + independent N(0, judge_sd^2) noise, rounded
+    and clipped to [score_min, score_max], then summed. `judge_sd` is the pre-rounding judge spread.
+    """
+    out = np.zeros_like(latent)
+    for c, k in enumerate(n_slots.astype(int)):
+        raw = latent[:, c : c + 1] + rng.normal(0.0, judge_sd, size=(latent.shape[0], k))
+        out[:, c] = np.clip(np.round(raw), score_min, score_max).sum(axis=1)
+    return out

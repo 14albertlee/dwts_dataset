@@ -91,6 +91,48 @@ def test_lmm_prediction_ignores_own_and_later_scores():
     assert np.allclose(base[early], pred[early])
 
 
+def test_crossed_lmm_prediction_ignores_own_and_later_scores():
+    from dwts_model.models import CrossedLMM
+
+    df = _weekly()
+    df["professional_id"] = df["couple_id"] % 7
+    df["x"] = np.random.default_rng(1).normal(size=len(df))
+    train, test = df[df["season"] < 6], df[df["season"] == 6].copy()
+    effects = ("couple", "couple_slope", "pro", "season", "night")
+    model = CrossedLMM(["week", "x"], effects).fit(train)
+    base_mean, base_cov = model.predict_dist(test)
+
+    altered = test.copy()
+    altered.loc[altered["week"] >= 4, "score"] = 1.0
+    mean, cov = model.predict_dist(altered)
+    early = altered["week"] <= 4
+    assert np.allclose(base_mean[early], mean[early])
+    assert not np.allclose(base_mean[~early], mean[~early])
+    for key in [(6, 1), (6, 4)]:
+        assert np.allclose(base_cov[key][1], cov[key][1])
+
+    # Unaired target week (NaN scores) predicts the same as the known week.
+    unaired = test.copy()
+    unaired.loc[unaired["week"] == 4, "score"] = np.nan
+    assert np.allclose(model.predict(unaired)[early], base_mean[early])
+
+
+def test_tie_stats_lowest_indicator_and_integer_totals():
+    from dwts_model.evaluate import lowest_indicator, simulate_integer_totals, tie_stats
+
+    totals = np.array([[20.0, 20.0, 25.0, 27.0], [21.0, 22.0, 22.0, 30.0], [20.0, 21.0, 22.0, 23.0]])
+    t = tie_stats(totals)
+    assert t["any_tie"].tolist() == [True, True, False]
+    assert t["bottom_tie"].tolist() == [True, False, False]
+    assert t["bottom3_tie"].tolist() == [True, True, False]
+    assert lowest_indicator(totals)[0].tolist() == [1, 1, 0, 0]
+
+    # Zero judge noise: each slot is the rounded, clipped latent score.
+    latent = np.array([[7.4, 9.8, 0.2]])
+    out = simulate_integer_totals(latent, np.array([3, 4, 2]), 0.0, np.random.default_rng(0))
+    assert out.tolist() == [[21.0, 40.0, 2.0]]
+
+
 def test_pair_counts_handles_ties_and_ordering():
     from dwts_model.evaluate import _pair_counts
 
