@@ -4,3 +4,4 @@
 dwts_scrapy/.scrapy/
 dwts_scrapy/crawl.log
 *.duckdb
+outputs/

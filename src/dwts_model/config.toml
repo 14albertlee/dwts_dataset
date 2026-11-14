@@ -1,0 +1,58 @@
+[data]
+db_path = "data/database/dwts_dataset.duckdb"
+schema = "main"
+
+[splits]
+# Seasons 1..train_end are the base training set. Every test season S is
+# predicted from all seasons before S (expanding window).
+train_end = 25
+validation = [26, 32]
+holdout = [33, 35]
+# Seasons with too few weeks to give stable per-season metrics.
+short_seasons = [26]
+
+[model]
+ridge_alphas = [0.01, 0.1, 1.0, 10.0, 100.0, 1000.0]
+score_min = 1.0
+score_max = 10.0
+
+# One Ridge model is fit per feature set, named ridge_<set>. Each set gets its own alpha.
+[model.feature_sets]
+phase1 = ["prev_score", "running_mean", "week"]
+theme_emotional = ["prev_score", "running_mean", "week", "theme_personal_emotional"]
+theme_all = [
+    "prev_score", "running_mean", "week",
+    "theme_personal_emotional", "theme_disney", "theme_competition_stage",
+    "theme_milestone_special", "theme_dance_competition", "theme_movies_tv", "theme_none",
+]
+style_group = ["prev_score", "running_mean", "week", "style_share_latin", "style_share_ballroom"]
+style_ordinal = ["prev_score", "running_mean", "week", "style_difficulty", "prev_style_difficulty"]
+style_onehot = [
+    "prev_score", "running_mean", "week",
+    "style_cha_cha_cha", "style_foxtrot", "style_quickstep", "style_jive", "style_paso_doble",
+    "style_tango", "style_viennese_waltz", "style_samba", "style_rumba", "style_argentine_tango",
+    "style_salsa", "style_jazz", "style_freestyle", "style_contemporary", "style_waltz",
+]
+style_onehot_theme_emotional = [
+    "prev_score", "running_mean", "week", "theme_personal_emotional",
+    "style_cha_cha_cha", "style_foxtrot", "style_quickstep", "style_jive", "style_paso_doble",
+    "style_tango", "style_viennese_waltz", "style_samba", "style_rumba", "style_argentine_tango",
+    "style_salsa", "style_jazz", "style_freestyle", "style_contemporary", "style_waltz",
+]
+style_onehot_theme_all = [
+    "prev_score", "running_mean", "week",
+    "theme_personal_emotional", "theme_disney", "theme_competition_stage",
+    "theme_milestone_special", "theme_dance_competition", "theme_movies_tv", "theme_none",
+    "style_cha_cha_cha", "style_foxtrot", "style_quickstep", "style_jive", "style_paso_doble",
+    "style_tango", "style_viennese_waltz", "style_samba", "style_rumba", "style_argentine_tango",
+    "style_salsa", "style_jazz", "style_freestyle", "style_contemporary", "style_waltz",
+]
+theme_style_ordinal = [
+    "prev_score", "running_mean", "week",
+    "theme_personal_emotional", "theme_disney", "theme_competition_stage",
+    "theme_milestone_special", "theme_dance_competition", "theme_movies_tv", "theme_none",
+    "style_difficulty", "prev_style_difficulty", "style_share_latin", "style_share_ballroom",
+]
+
+[output]
+dir = "outputs/layer1"
