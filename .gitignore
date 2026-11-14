@@ -3,4 +3,4 @@
 *.pyc
 dwts_scrapy/.scrapy/
 dwts_scrapy/crawl.log
-dwts_dataset.duckdb
+*.duckdb

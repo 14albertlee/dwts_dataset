@@ -1,0 +1,16 @@
+{
+    "workbench.editorAssociations": {
+        "0": {
+            "viewType": "jupyter.notebook.ipynb",
+            "filenamePattern": "*.ipynb"
+        },
+        "1": {
+            "viewType": "jupyter-notebook",
+            "filenamePattern": "*.ipynb"
+        },
+        "*.parquet": "duckdb.dataFileViewer",
+        "*.csv": "duckdb.dataFileViewer",
+        "*.tsv": "duckdb.dataFileViewer",
+        "*.xlsx": "duckdb.dataFileViewer"
+    }
+}
