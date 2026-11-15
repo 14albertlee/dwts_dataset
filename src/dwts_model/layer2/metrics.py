@@ -43,9 +43,20 @@ def week_metrics(probs: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+PHASES = ["weeks 2-4", "weeks 5-7", "weeks 8+"]
+
+
+def week_phase(week: pd.Series) -> pd.Series:
+    """Season phase of a week number: early (2-4), middle (5-7) or late (8+)."""
+    return pd.cut(week, [0, 4, 7, np.inf], labels=PHASES)
+
+
 def summarize(wm: pd.DataFrame, by: str | None = None) -> pd.DataFrame:
-    """Mean of each metric overall (by=None), by number of couples remaining (by='field'), or by rule era (by='era')."""
-    if by == "field":
+    """Mean of each metric overall (by=None), by number of couples remaining (by='field'), by rule era
+    (by='era'), or by season phase (by='phase', see `week_phase`)."""
+    if by == "phase":
+        g = wm.groupby(week_phase(wm["week"]), observed=True)
+    elif by == "field":
         bucket = pd.cut(wm["n_couples"], [0, 4, 6, 8, 10, 20], labels=["<=4", "5-6", "7-8", "9-10", "11+"])
         g = wm.groupby(bucket, observed=True)
     elif by == "era":

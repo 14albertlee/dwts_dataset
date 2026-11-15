@@ -6,7 +6,8 @@ from dwts_model.layer2.baselines import fit_rho, lowest_judge_probs
 from dwts_model.layer2.fan_model import log_plackett_luce, sample_fan_points
 from dwts_model.layer2.fit import fit_theta, prepare_week, profiled_nll_and_grad
 from dwts_model.layer2.forecast import all_fan_points, elimination_probs
-from dwts_model.layer2.metrics import bootstrap_ci, calibration, paired_ci, summarize, week_metrics
+from dwts_model.layer2.judge_inputs import PrevWeekJudgeInput
+from dwts_model.layer2.metrics import METRICS, bootstrap_ci, calibration, paired_ci, summarize, week_metrics
 from dwts_model.layer2.rules import (
     Rule,
     eliminated_index,
@@ -244,3 +245,22 @@ def test_null_self_consistency_on_synthetic_season():
     ).reset_index(drop=True)
     check = null_self_consistency(probs, cw, "average", n_rep=200, seed=1).set_index("metric")
     assert (check["z"].abs() < 4).all()
+
+def test_summarize_by_phase_buckets_weeks():
+    wm = pd.DataFrame({"week": [2, 4, 5, 7, 8, 11], "top1": [1.0, 0.0, 1.0, 1.0, 0.0, 0.0]})
+    wm = wm.assign(**{m: 0.0 for m in METRICS if m != "top1"})
+    out = summarize(wm, by="phase").set_index("group")
+    assert list(out.index) == ["weeks 2-4", "weeks 5-7", "weeks 8+"]
+    assert out["weeks"].tolist() == [2, 2, 2]
+    assert out["top1"].tolist() == [0.5, 1.0, 0.0]
+
+
+def test_prev_week_input_uses_each_couples_previous_score():
+    weekly = pd.DataFrame({
+        "season": [1] * 6, "week": [1, 1, 2, 2, 3, 3], "couple_id": [1, 2, 1, 2, 1, 2],
+        "score": [6.0, 8.0, 7.0, 5.0, 9.0, 9.0], "n_performances": 1, "eliminated": False,
+    })
+    prev = PrevWeekJudgeInput(weekly)
+    assert not prev.available(1, 1, [1, 2])  # week 1 has no previous week
+    assert prev.available(1, 3, [2, 1])
+    assert prev.totals(1, 3, [2, 1]).tolist() == [[5.0, 7.0]]

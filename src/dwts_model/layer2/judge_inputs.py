@@ -32,12 +32,31 @@ class ActualJudgeInput:
         return self._scores.loc[[(season, week, c) for c in couple_ids]].to_numpy()[None, :]
 
 
+class PrevWeekJudgeInput:
+    """Naive baseline: each couple's previous-week average judge score stands in for this week's."""
+
+    name = "prev_week"
+
+    def __init__(self, weekly):
+        history = build_features(weekly)
+        self._prev = history.set_index(["season", "week", "couple_id"])["prev_score"]
+        self._featured = history.groupby(["season", "week"])["couple_id"].agg(set).to_dict()
+
+    def available(self, season: int, week: int, couple_ids) -> bool:
+        return set(couple_ids) <= self._featured.get((season, week), set())
+
+    def totals(self, season: int, week: int, couple_ids) -> np.ndarray:
+        return self._prev.loc[[(season, week, c) for c in couple_ids]].to_numpy()[None, :]
+
+
 class Layer1JudgeInput:
-    """Layer 1 forecast of a night's integer judge totals, using only earlier data (as in predict_upcoming)."""
+    """Layer 1 forecast of a night's integer judge totals, using only earlier data (as in predict_upcoming).
 
-    name = "layer1"
+    `model_name` is a Ridge model from config (default: the main model); other models are named
+    `layer1_<model>` in the output so they can sit next to the default.
+    """
 
-    def __init__(self, cfg, weekly, perf, judges, n_draws: int | None = None):
+    def __init__(self, cfg, weekly, perf, judges, n_draws: int | None = None, model_name: str | None = None):
         self.cfg = cfg
         self.n_draws = n_draws or cfg.mc_draws
         self.history = build_features(weekly, build_context_features(perf))
@@ -45,7 +64,9 @@ class Layer1JudgeInput:
         self.judges = judges
         self.slots = judges.groupby(["season", "week", "couple_id"])["judge_score"].count()
         params = json.loads((cfg.output_dir / "selected_params.json").read_text())["ridge_alpha"]
-        self.set_name = cfg.main_model.removeprefix("ridge_")
+        model_name = model_name or cfg.main_model
+        self.name = "layer1" if model_name == cfg.main_model else f"layer1_{model_name}"
+        self.set_name = model_name.removeprefix("ridge_")
         self.alpha = params[self.set_name]
         self._oos = None
 

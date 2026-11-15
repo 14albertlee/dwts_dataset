@@ -102,7 +102,23 @@ Only for a final check, never for tuning.
 
 ```sh
 python scripts/run_layer1.py --mode holdout --confirm-holdout --models ridge --feature-sets main_prev_bottom3 main_order
+python scripts/run_rule_check.py
+python scripts/report_holdout.py    # -> outputs/reports/holdout/report.md (~5 min)
 ```
+
+`report_holdout.py` compares both score models and the elimination forecast with baselines on the holdout and
+on all out-of-sample seasons 17+: top-1/top-2 tables, double lift and calibration charts, results by season phase
+(weeks 2-4, 5-7, 8+), and plain-language findings.
+
+## Effects of the score-model predictors (OLS)
+
+```sh
+python scripts/report_ols.py        # -> outputs/reports/ols/report.md
+```
+
+OLS on all seasons with the predictors of the pre-show and order-announced Ridge models: effect of each predictor
+on the average judge score in points (couple-clustered 95% CIs), dance styles vs the average dance, importance by
+predictor group, collinearity, and a comparison with the Ridge coefficients.
 
 ## 5. Score an upcoming episode
 
