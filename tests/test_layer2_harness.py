@@ -4,7 +4,7 @@ import pytest
 
 from dwts_model.layer2.baselines import fit_rho, lowest_judge_probs
 from dwts_model.layer2.fan_model import log_plackett_luce, sample_fan_points
-from dwts_model.layer2.fit import fit_theta, prepare_week
+from dwts_model.layer2.fit import fit_theta, prepare_week, profiled_nll_and_grad
 from dwts_model.layer2.forecast import all_fan_points, elimination_probs
 from dwts_model.layer2.metrics import bootstrap_ci, calibration, paired_ci, summarize, week_metrics
 from dwts_model.layer2.rules import (
@@ -131,6 +131,27 @@ def test_fitter_recovers_judges_save_probability():
     weeks = _simulate_weeks(0.0, n_weeks=500, n_couples=6, seed=6, rule=Rule("save", save_q=0.8))
     est = fit_theta(weeks, 1)
     assert est.save_q == pytest.approx(0.8, abs=0.1)
+
+
+def test_profiled_gradient_matches_finite_differences():
+    rng = np.random.default_rng(7)
+    weeks = []
+    for i in range(40):
+        n = 6 if i % 2 else 10  # enumerated and sampled weeks
+        x = rng.normal(size=(n, 2))
+        totals = rng.integers(20, 27, n).astype(float)
+        rule = Rule("save", save_q=0.8) if i % 3 == 0 else RANK
+        e = int(rng.integers(n)) if i % 4 == 0 else int(np.argmin(totals))  # some surprises, so eps > 0
+        weeks.append(prepare_week(totals, e, x, rule, rng, draws=4000))
+    n = np.array([w.n_couples for w in weeks], dtype=float)
+    theta = np.array([0.4, -0.3])
+    _, grad = profiled_nll_and_grad(theta, weeks, n, ridge=0.1)
+    h = 1e-5
+    numeric = [
+        (profiled_nll_and_grad(theta + h * d, weeks, n, 0.1)[0] - profiled_nll_and_grad(theta - h * d, weeks, n, 0.1)[0]) / (2 * h)
+        for d in np.eye(2)
+    ]
+    assert grad == pytest.approx(numeric, rel=1e-3, abs=1e-4)
 
 
 def test_fitter_with_sampled_orderings_for_large_fields():

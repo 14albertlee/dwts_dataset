@@ -56,7 +56,7 @@ Output: the share of draws in which each couple is eliminated, which is its elim
 **Baselines to beat:**
 1. Lower judge score goes home: P proportional to rho^(k - 1) for the couple k-th from the bottom of the judge totals (ties share a position), rho fitted on earlier seasons. rho = 0 is "the lowest goes home, ties broken randomly"; rho > 0 keeps the order among the rest, so the ranking metrics are fair to it.
 2. Null fan model: every couple has the same expected fan support, so the fan ranking is a uniformly random ordering (all orderings equally likely). This is theta = 0 in the fan model, i.e., the fitted model with the features switched off. Fan ranks are still a strict ordering with no ties; "equal" refers to equal expected support, not tied ranks.
-3. **Skill-only fan model:** only `beta_skill` fitted (survival and notability off). Because fan support tracks quality, the random-ranking null is too easy a floor; this is the realistic one, and the extra features must beat it.
+3. **Skill-only fan model:** only `beta_skill` fitted. Because fan support tracks quality, the random-ranking null is too easy a floor; this is the realistic one, and the extra features must beat it.
 
 **Two backtest versions:**
 - **Actual judge scores:** isolates Layer 2.
@@ -73,7 +73,54 @@ The logic: fix the data and the rule first, build one evaluation harness, then c
 3. **Harness.** One function that takes judge totals (actual, or Layer 1 draws) plus fan utilities and returns elimination probabilities; a fitter (theta fit on actual judge scores, rolling origin by season); and a backtest that reports the section 5 metrics under both judge-score inputs. Validate it with the two baselines: "lowest judge score goes home" and the random-fan null.
 4. **Model ladder.** Fit and backtest each rung, and keep it only if it beats the previous rung:
    - **M1:** skill only. This is the realistic floor; check that `beta_skill` is positive.
-   - **M2:** M1 + survival surplus + notability group.
-   - **M3 (optional):** M2 + persistent per-couple popularity `alpha_i ~ Normal(0, tau^2)`, drawn once per couple per season. Fit by Monte Carlo over alpha within each season; when forecasting, reweight alpha draws by how well they explain the season's earlier weeks. It may make survival surplus redundant.
+   - **M2:** M1 + survival surplus + notability group. Tested and removed (section 7).
+   - **M3 (optional):** M2 + persistent per-couple popularity `alpha_i ~ Normal(0, tau^2)`, drawn once per couple per season. Fit by Monte Carlo over alpha within each season; when forecasting, reweight alpha draws by how well they explain the season's earlier weeks. It may make survival surplus redundant. Skipped (section 7).
 5. **Final report for the best model.** Calibration table, hit rates by couples remaining against 1/N, season-level bootstrap intervals, and the gap between the actual-score and Layer 1 versions (the cost of Layer 1 error).
 6. **Later extensions, one at a time:** current-week judge score as a fan feature (actual when fitting, simulated in combined runs, so fan support and judge rank stay correlated within each draw), surprise-weighted survival surplus, and pre-season follower counts if historical data exists (pre-season only, to avoid leakage).
+
+## 7. Results (status: fan-model ladder closed, judges-only is the default forecast)
+
+Reproduce with `python scripts/run_rule_check.py` then `python scripts/run_layer2.py --models lowest_judge null m1 --compare-to lowest_judge null --validate-null`. Average tie convention; test seasons 6-35, each fit on earlier seasons only.
+
+**Data.** 222 of 228 single-elimination weeks are usable (196 rank-rule, 26 judges' save). Dropped: 5 weeks with uneven dance counts and S17 W5 (a co-top judge scorer went home, impossible under H1). The 3 withdrawals (S9 W3, S16 W2, S31 W5) are excluded as non-votes. Test weeks: 186 with actual judge scores, 101 with Layer 1 forecast scores (Layer 1 needs seasons 17+ and a previous week for every couple).
+
+**Model ladder** (log loss, lower is better; random guess 2.116 on 186 weeks, 2.168 on 101):
+
+| Model | Actual scores (186 weeks) | Layer 1 scores (101 weeks) |
+|---|---|---|
+| Lower judge score goes home (rho fitted, 0.51-0.59) | **1.618** | 1.757 |
+| Random fans under the era rule (null) | 1.678 | 1.773 |
+| M1: skill (`beta_skill` grows to about 0.3) | 1.653 | **1.744** |
+| M2: M1 + survival surplus + notability | 1.722 | not kept |
+
+- Judges-only beats the random-fan null with actual scores (-0.060, CI -0.112 to -0.007). M1 does not beat judges-only (+0.035, CI -0.018 to +0.082) and M2 is significantly worse than both. With Layer 1 scores every difference is within noise.
+- **Fan features that failed** (all tested without notability, against M1): survival surplus as a count, surprise-weighted (sum of the judges-only elimination probability of each week survived), and survived-while-judges'-lowest. Alone each gets a negative coefficient, because surviving a dangerous week mostly marks a weak couple about to leave; next to skill the coefficient turns slightly positive with more data but never improves log loss. Notability coefficients were unstable (reality stars -2.1 early, -0.3 late).
+- **Why:** having survived as the judges' lowest before does not change the chance of going home the next time a couple is lowest (relative to field size it stays about 3.2x random). Memorable fan favourites (Harry Jowsey S32, Bristol Palin S11) exist, but a shared coefficient cannot separate them from the many couples rescued once and then eliminated.
+- An ensemble (50/50 judges-only and M1) ties the better of the two under both inputs and is not worth its cost. M3 (per-couple popularity) was skipped: its premise, that past rescues predict future rescues, is what the survived-while-lowest check found no evidence for.
+- The uniform mixing weight `eps` settles at about 0.19 in the fan models: about one elimination in five is unexplained by judge ranks and skill.
+
+**Default model, lower judge score goes home:**
+
+| | Actual scores (186 weeks) | Layer 1 scores (101 weeks) | Random |
+|---|---|---|---|
+| Top-1 | 0.390 (CI 0.315-0.463) | 0.347 (0.265-0.429) | 0.13 / 0.12 |
+| Top-3 | 0.774 (0.707-0.832) | 0.703 (0.582-0.815) | 0.39 / 0.36 |
+| Log loss | 1.618 (1.477-1.773) | 1.757 (1.642-1.888) | 2.116 / 2.168 |
+
+By couples remaining (actual scores), top-1 vs random: <=4 couples 0.55 vs 0.25 (11 weeks), 5-6 0.33 vs 0.18, 7-8 0.43 vs 0.13, 9-10 0.41 vs 0.11, 11+ 0.36 vs 0.08. The model's lift over random is largest in big fields.
+
+**Calibration** (couple-weeks in prediction quintiles, mean predicted vs observed elimination rate):
+
+| Quintile | Actual: predicted / observed | Layer 1: predicted / observed |
+|---|---|---|
+| 1 | 0.003 / 0.003 | 0.022 / 0.005 |
+| 2 | 0.016 / 0.018 | 0.052 / 0.027 |
+| 3 | 0.054 / 0.074 | 0.087 / 0.065 |
+| 4 | 0.149 / 0.141 | 0.139 / 0.152 |
+| 5 | 0.348 / 0.334 | 0.248 / 0.297 |
+
+With actual scores the model is well calibrated. With Layer 1 scores it is somewhat too flat: it gives too much probability to safe couples and too little to the likeliest ones, because Layer 1's score uncertainty spreads the judges' ranking.
+
+**Cost of Layer 1 error.** On the same 101 weeks, Layer 1 scores vs actual scores: log loss -0.016 (CI -0.201 to +0.167), top-1 +0.021. No measurable cost. The lower Layer 1 numbers in the tables come from the weeks it covers (seasons 17+, the harder recent seasons; actual scores on those weeks give 1.773), not from Layer 1 error. The calibration above shows where the error does appear: flatter probabilities.
+
+**Harness checks.** The random-fan forecast agrees with an independent simulation of random-fan worlds (all |z| < 1). The fitter recovers known parameters on simulated data, and its gradient matches finite differences (tests in `tests/test_layer2_*.py`).

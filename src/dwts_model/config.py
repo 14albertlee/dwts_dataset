@@ -29,7 +29,6 @@ class Config:
     seed: int
     first_test_season: int
     ridge: float
-    notability_reference: str
     exact_enum_max: int
     mc_draws: int
     save_seasons: tuple[int, int]
@@ -66,7 +65,6 @@ def load_config(path: Path | str | None = None) -> Config:
         seed=layer2["seed"],
         first_test_season=layer2["first_test_season"],
         ridge=layer2["ridge"],
-        notability_reference=layer2["notability_reference"],
         exact_enum_max=layer2["exact_enum_max"],
         mc_draws=layer2["mc_draws"],
         save_seasons=tuple(layer2["save_seasons"]),

@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .baselines import fit_rho, lowest_judge_probs
-from .fan_model import design_matrix, notability_groups, utilities
+from .fan_model import design_matrix, utilities
 from .fit import fit_theta, prepare_week
 from .forecast import elimination_probs
 from .rules import Rule, era_for_season
@@ -22,12 +22,13 @@ class ModelSpec:
     features: tuple[str, ...] = ()
 
 
+# lowest_judge is the default forecast; the fan models are kept as the research path (none beat it).
 MODELS = {
     "lowest_judge": ModelSpec("lowest_judge", "lowest_judge"),
     "null": ModelSpec("null", "fan"),  # theta = 0: every fan ordering equally likely
     "m1": ModelSpec("m1", "fan", ("skill",)),
-    "m2": ModelSpec("m2", "fan", ("skill", "survival_surplus", "notability")),
 }
+DEFAULT_MODEL = "lowest_judge"
 
 
 @dataclass
@@ -50,8 +51,7 @@ class _Weeks:
         self.index = cw.groupby(["season", "week"]).indices
         self.columns, self.X = [], np.zeros((len(cw), 0))
         if spec.kind == "fan":
-            groups = notability_groups(cw, cfg.notability_reference)
-            design = design_matrix(cw, spec.features, cfg.notability_reference, groups)
+            design = design_matrix(cw, spec.features)
             self.columns, self.X = list(design.columns), design.to_numpy()
         self._prepared = {}
 

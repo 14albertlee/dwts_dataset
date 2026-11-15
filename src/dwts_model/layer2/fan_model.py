@@ -6,32 +6,17 @@ Plackett-Luce ordering. theta = 0 gives uniformly random orderings (the null mod
 import numpy as np
 import pandas as pd
 
-FEATURE_GROUPS = ("skill", "survival_surplus", "notability")
+# Survival surplus (plain, surprise-weighted, and survived-as-judges'-lowest) and notability groups were
+# tried as fan features and did not beat skill alone out of sample (docs/LAYER2_POC_PLAN.md, section 7).
+FEATURES = ("skill",)
 
 
-def design_matrix(cw: pd.DataFrame, features, reference_group: str, groups=None) -> pd.DataFrame:
-    """Columns for the requested feature groups; notability gets one dummy per non-reference group.
-
-    `groups` fixes the notability dummies (default: every group in `cw`), so the columns stay the
-    same when a single week is passed in.
-    """
-    unknown = set(features) - set(FEATURE_GROUPS)
+def design_matrix(cw: pd.DataFrame, features) -> pd.DataFrame:
+    """One numeric column per requested feature."""
+    unknown = set(features) - set(FEATURES)
     if unknown:
-        raise ValueError(f"Unknown feature groups: {sorted(unknown)}")
-    if groups is None:
-        groups = notability_groups(cw, reference_group)
-    cols = {}
-    for name in features:
-        if name == "notability":
-            for group in groups:
-                cols[f"notab_{group}"] = (cw["notability_group"] == group).astype(float)
-        else:
-            cols[name] = cw[name].astype(float)
-    return pd.DataFrame(cols, index=cw.index)
-
-
-def notability_groups(cw: pd.DataFrame, reference_group: str) -> list[str]:
-    return sorted(set(cw["notability_group"]) - {reference_group})
+        raise ValueError(f"Unknown features: {sorted(unknown)}")
+    return pd.DataFrame({name: cw[name].astype(float) for name in features}, index=cw.index)
 
 
 def utilities(X, theta) -> np.ndarray:

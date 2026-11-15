@@ -1,7 +1,10 @@
 """Layer 2 harness: backtest elimination-probability models on the usable weeks (needs run_rule_check.py first).
 
-    python scripts/run_layer2.py --models lowest_judge null m1 --judge-inputs actual layer1
-    python scripts/run_layer2.py --models null --validate-null
+The default forecast is `lowest_judge` (lower judge total goes home, fitted rho) with Layer 1 judge scores.
+The fan models (`null`, `m1`) are the research path; none beat the default (docs/LAYER2_POC_PLAN.md, section 7).
+
+    python scripts/run_layer2.py                      # default model, actual and Layer 1 judge scores
+    python scripts/run_layer2.py --models lowest_judge null m1 --compare-to lowest_judge null --validate-null
 """
 import argparse
 import sys
@@ -13,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from dwts_model.config import load_config  # noqa: E402
 from dwts_model.data import load_judge_scores, load_performance_context, load_weekly_scores  # noqa: E402
-from dwts_model.layer2.backtest import MODELS, backtest, fit_season_params, params_table  # noqa: E402
+from dwts_model.layer2.backtest import DEFAULT_MODEL, MODELS, backtest, fit_season_params, params_table  # noqa: E402
 from dwts_model.layer2.judge_inputs import ActualJudgeInput, Layer1JudgeInput  # noqa: E402
 from dwts_model.layer2.metrics import bootstrap_ci, calibration, paired_ci, summarize, week_metrics  # noqa: E402
 from dwts_model.layer2.validation import null_self_consistency  # noqa: E402
@@ -23,10 +26,12 @@ PAIRED_METRICS = ["logloss", "brier", "top1", "top2", "top3"]
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
-    parser.add_argument("--models", nargs="+", choices=sorted(MODELS), default=["lowest_judge", "null"])
-    parser.add_argument("--judge-inputs", nargs="+", choices=["actual", "layer1"], default=["actual"])
+    parser.add_argument("--models", nargs="+", choices=sorted(MODELS), default=[DEFAULT_MODEL])
+    parser.add_argument("--judge-inputs", nargs="+", choices=["actual", "layer1"], default=["actual", "layer1"])
     parser.add_argument("--tie", default=None, help="tie convention (default: config)")
     parser.add_argument("--validate-null", action="store_true", help="simulated-world check of the null model")
+    parser.add_argument("--compare-to", nargs="+", choices=sorted(MODELS), default=["null"],
+                        help="reference models for paired season-bootstrap differences")
     parser.add_argument("--n-boot", type=int, default=1000)
     parser.add_argument("--config", default=None)
     args = parser.parse_args()
@@ -75,12 +80,13 @@ def main() -> None:
         print(by_era.round(3).to_string(index=False))
 
     for (name, kind), wm in per_week.items():
-        if name == "null" or ("null", kind) not in per_week:
-            continue
-        diff = paired_ci(wm, per_week[("null", kind)], PAIRED_METRICS, args.n_boot, cfg.seed)
-        diff.to_csv(cfg.layer2_dir / f"paired_{name}_vs_null_{kind}_{tie}.csv", index=False)
-        print(f"\n{name} minus null, {kind} judge scores (season bootstrap 95% CI; log loss and Brier: lower is better)")
-        print(diff.round(3).to_string(index=False))
+        for ref in args.compare_to:
+            if name == ref or (ref, kind) not in per_week:
+                continue
+            diff = paired_ci(wm, per_week[(ref, kind)], PAIRED_METRICS, args.n_boot, cfg.seed)
+            diff.to_csv(cfg.layer2_dir / f"paired_{name}_vs_{ref}_{kind}_{tie}.csv", index=False)
+            print(f"\n{name} minus {ref}, {kind} judge scores (season bootstrap 95% CI; log loss and Brier: lower is better)")
+            print(diff.round(3).to_string(index=False))
 
     for key, wm in per_week.items():
         ci = bootstrap_ci(wm, ["top1", "logloss", "brier"], args.n_boot, cfg.seed)

@@ -114,7 +114,6 @@ tie_convention = "average"
 seed = 0
 first_test_season = 6
 ridge = 0.1
-notability_reference = "actor"
 # Weeks with at most this many couples count fan orderings exactly; larger fields use Monte Carlo.
 exact_enum_max = 8
 mc_draws = 20000
