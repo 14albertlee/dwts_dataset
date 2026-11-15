@@ -1,3 +1,5 @@
+import json
+
 import duckdb
 import pandas as pd
 
@@ -95,6 +97,22 @@ def load_judge_scores(cfg: Config) -> pd.DataFrame:
         return con.execute(_JUDGE_SCORES_QUERY.format(schema=cfg.schema)).df()
     finally:
         con.close()
+
+
+def load_withdrawals(cfg: Config) -> pd.DataFrame:
+    """(season, couple_id) of couples who withdrew rather than being voted off.
+
+    The database folds `Withdrew` into `eliminated`, so the raw scrape is read for the result text and
+    matched to couple ids by season and celebrity name.
+    """
+    with open(cfg.scrape_path, encoding="utf-8") as f:
+        rows = [r for r in json.load(f) if r.get("result") == "Withdrew"]
+    withdrew = pd.DataFrame(
+        {"season": [int(r["season"]) for r in rows], "celebrity": [r["celebrity"] for r in rows]},
+        columns=["season", "celebrity"],
+    ).drop_duplicates()
+    couples = load_season_couples(cfg)
+    return withdrew.merge(couples, on=["season", "celebrity"])[["season", "couple_id"]].drop_duplicates()
 
 
 def load_performance_context(cfg: Config) -> pd.DataFrame:

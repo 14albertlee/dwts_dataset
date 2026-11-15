@@ -1,6 +1,8 @@
 [data]
 db_path = "data/database/dwts_dataset.duckdb"
 schema = "main"
+# Raw scrape, read only for result text the database does not keep (withdrawals).
+scrape_path = "dwts_scrapy/scores.json"
 
 [splits]
 # Seasons 1..train_end are the base training set. Every test season S is
@@ -102,3 +104,21 @@ main_order = [
 
 [output]
 dir = "outputs/layer1"
+
+[layer2]
+dir = "outputs/layer2"
+tie_conventions = ["best", "average", "worst"]
+# Default for later steps. The rule check cannot identify the convention (it differs on one week
+# only), so treat it as a variant to compare in the model ladder.
+tie_convention = "average"
+seed = 0
+first_test_season = 6
+ridge = 0.1
+notability_reference = "actor"
+# Weeks with at most this many couples count fan orderings exactly; larger fields use Monte Carlo.
+exact_enum_max = 8
+mc_draws = 20000
+# Judges' save era (H1 bottom two, judges send one home), inclusive; it ran from season 28 until it was
+# removed in season 32 (docs/MODELING_PLAN.md 6.1). Every other season uses rank points (H1), including
+# seasons 3-27, which some sources report as percent-share: H1 is not ruled out there and keeps one scheme.
+save_seasons = [28, 31]

@@ -79,6 +79,29 @@ def night_covariance(n_couples: int, week: int, spread: dict[str, tuple[float, f
     return var_w * np.eye(n_couples) + var_n * np.ones((n_couples, n_couples)), var_w
 
 
+def simulate_night_totals(
+    mean: np.ndarray,
+    week: int,
+    n_slots: np.ndarray,
+    spread: dict[str, tuple[float, float]],
+    judge_var: float,
+    rng: np.random.Generator,
+    n_draws: int = 10000,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Integer judge totals (draws x couples) for one night, and the covariance of the mean scores.
+
+    `n_slots` is the number of judge-dance scores in each couple's total (judges x dances).
+    """
+    mean = np.asarray(mean, dtype=float)
+    n_slots = np.asarray(n_slots, dtype=float)
+    cov, var_w = night_covariance(len(mean), week, spread)
+    # Remove the judge-noise share of the per-couple variance to get the shared performance shock.
+    latent_cov = cov - np.diag(np.minimum(judge_var / n_slots, 0.9 * var_w))
+    latent = rng.multivariate_normal(mean, latent_cov, size=n_draws, method="cholesky")
+    totals = simulate_integer_totals(latent, n_slots, np.sqrt(max(judge_var - 1 / 12, 0.01)), rng)
+    return totals, cov
+
+
 def forecast_night(
     mean: np.ndarray,
     week: int,
@@ -92,18 +115,12 @@ def forecast_night(
 ) -> pd.DataFrame:
     """Per-couple score interval and elimination-relevant probabilities for one night.
 
-    `n_slots` is the number of judge-dance scores in each couple's total (judges x dances).
     Returns `lo` / `hi` (central `interval` range of the mean score, clipped to the score range),
     `p_lowest` (share of draws where the couple has the lowest integer total, ties counted for
     every tied couple) and `p_tied_lowest` (lowest total shared with at least one other couple).
     """
     mean = np.asarray(mean, dtype=float)
-    n_slots = np.asarray(n_slots, dtype=float)
-    cov, var_w = night_covariance(len(mean), week, spread)
-    # Remove the judge-noise share of the per-couple variance to get the shared performance shock.
-    latent_cov = cov - np.diag(np.minimum(judge_var / n_slots, 0.9 * var_w))
-    latent = rng.multivariate_normal(mean, latent_cov, size=n_draws, method="cholesky")
-    totals = simulate_integer_totals(latent, n_slots, np.sqrt(max(judge_var - 1 / 12, 0.01)), rng)
+    totals, cov = simulate_night_totals(mean, week, n_slots, spread, judge_var, rng, n_draws)
     lowest = lowest_indicator(totals)
     z = norm.ppf(0.5 + interval / 2)
     sd = np.sqrt(np.diag(cov))
