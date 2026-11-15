@@ -1,8 +1,54 @@
-# Layer 1 Runbook: judge-score model
+# Modeling Runbook: judge scores and elimination forecast
 
 Commands only. Run from the repository root. Rationale: [MODELING_PLAN.md](./MODELING_PLAN.md);
-experiments: [LAYER1_NEXT_EXPERIMENTS.md](./LAYER1_NEXT_EXPERIMENTS.md). Settings live in
-[`config.toml`](../src/dwts_model/config.toml). Outputs go to `outputs/layer1/`.
+experiments: [LAYER1_NEXT_EXPERIMENTS.md](./LAYER1_NEXT_EXPERIMENTS.md); elimination model:
+[LAYER2_POC_PLAN.md](./LAYER2_POC_PLAN.md). Settings live in
+[`config.toml`](../src/dwts_model/config.toml). Outputs go to `outputs/layer1/` and `outputs/layer2/`.
+
+## Weekly workflow (in season)
+
+The loop to run every week. One-time setup (sections 1 and 3) must be done first; the rest of this
+document is reference.
+
+| When | Step | Commands |
+|---|---|---|
+| After an episode airs and its Wikipedia scores are up | 1. Update the data | section 2 (scrape, parse, build the database) |
+| Right after step 1 | 2. Retrain the elimination model on all data | `run_rule_check.py`, then `run_layer2.py --fit-final` |
+| Before the next episode, once theme and dances are known | 3. Write the schedule CSV, `order` left empty | `predict_upcoming.py --template`, or Claude with [PROMPT_UPCOMING_SCHEDULE.md](./PROMPT_UPCOMING_SCHEDULE.md) |
+| Same time | 4. Score pre-show | `predict_upcoming.py --schedule ...` |
+| During the episode, once the running order is announced | 5. Fill the `order` column and re-score (better estimate) | same command as step 4 |
+
+```sh
+# 1. update the data (after the episode airs)
+cd dwts_scrapy
+scrapy crawl dwts_scores -O scores.json
+cd ..
+python scripts/parse_scores_json_to_tables.py
+python scripts/build_duckdb.py
+
+# 2. retrain the elimination model on all data
+python scripts/run_rule_check.py
+python scripts/run_layer2.py --fit-final
+
+# 3. schedule for the next week (e.g. season 35 week 10); fill theme and styles, leave order empty
+python scripts/predict_upcoming.py --template prediction_files/inputs/S35W10.csv
+
+# 4. pre-show forecast -> prediction_files/outputs/S35W10_noorder.csv
+python scripts/predict_upcoming.py --schedule prediction_files/inputs/S35W10.csv --save-file
+
+# 5. order announced: fill the order column in the same CSV, re-run -> S35W10_order.csv
+python scripts/predict_upcoming.py --schedule prediction_files/inputs/S35W10.csv --save-file
+```
+
+Checks each week:
+- The printed header names the week you expect (the one after the last scored week). If it shows the
+  week that just aired, step 1 did not pick it up yet (Wikipedia not updated, or the scrape failed).
+- No `Warning: final_params.json covers data through ...` line; if it appears, step 2 was skipped.
+- Guest judge or a different panel size: add `--judges N`.
+- `p_elim` assumes exactly one couple goes home; read it with care in double-elimination or
+  no-elimination weeks, and in weeks where couples dance different numbers of times (the script prints a note).
+
+Not weekly: re-run section 3 (alpha tuning) only after a config or feature change.
 
 ## 1. Setup
 
@@ -12,7 +58,7 @@ pip install -r requirements.txt
 
 ## 2. Scrape and build the database
 
-Needed only when new episodes have aired.
+Needed only when new episodes have aired (weekly workflow step 1).
 
 ```sh
 cd dwts_scrapy
@@ -60,8 +106,20 @@ python scripts/run_layer1.py --mode holdout --confirm-holdout --models ridge --f
 
 ## 5. Score an upcoming episode
 
-The script scores the week after the last scored week of the latest season in the database, so
-re-run step 2 after each episode airs. The printed header shows the season and week it used.
+Reference for weekly workflow steps 2-5. The script scores the week after the last scored week of
+the latest season in the database. The printed header shows the season and week it used.
+
+### Retrain on all data (weekly workflow step 2)
+
+```sh
+python scripts/run_rule_check.py        # rebuild the Layer 2 couple-week table and usable weeks
+python scripts/run_layer2.py --fit-final  # judges-only elimination model on ALL usable weeks
+```
+
+`--fit-final` saves `outputs/layer2/final_params.json` (`rho`, weeks used, `data_through`), which
+`predict_upcoming.py` reads for `p_elim`. It warns if the database has weeks the file does not cover.
+The Ridge score models need no retrain step: they are refit on every scored week before the target
+week on each run (alphas from step 3). Re-run step 3 only after a config or feature change.
 
 There are two models:
 
@@ -94,9 +152,20 @@ Besides the predicted mean score, each couple gets, from the Ridge mean plus a G
   judge, rounded to integers, and summed, so ties happen at realistic rates; every couple tied for
   lowest counts, so the column can sum to a little over 1.
 
-These are judge-score probabilities only. They are not elimination probabilities: fan votes come in
-with Layer 2 and the combination. The spread comes from the same model's out-of-sample residuals in
+These are judge-score probabilities only. The spread comes from the same model's out-of-sample residuals in
 earlier seasons, so the pre-show model's spread already includes the unknown running order.
+
+- `p_elim`: probability the couple is eliminated, from the judges-only Layer 2 model (the default; fan
+  models did not beat it, docs/LAYER2_POC_PLAN.md section 7) applied to the same simulated totals. The
+  k-th lowest judge total gets weight `rho^(k-1)` (ties share a position), normalized to sum to 1;
+  `rho` (about 0.58) is fit on real eliminations, so it accounts for fans rescuing low scorers on
+  average. Unlike `p_lowest`, the column sums to 1. It assumes exactly one couple goes home; fan
+  votes are not modeled per couple, and weeks with uneven dance counts get a note (the model was fit
+  on even weeks only).
+
+In announced mode and `--backtest` the columns are `p_low_*` and `p_elim_*` per model. For a backtest
+or an `--season/--week` run of a week already in `final_params.json`, `rho` is refit on usable weeks
+before that week, so the week's own result is never used.
 
 By default predictions are only printed. `--save-file` also writes the CSV: bare, it goes to
 `prediction_files/outputs/`; `PATH` can be another directory or a `.csv` file. The file is named
@@ -117,8 +186,8 @@ python scripts/predict_upcoming.py --backtest --season 34 --week 6
 
 Reads the theme, dances and running order from the database, trains only on weeks before it, and
 prints both models (pre-show and order-announced) next to the actual scores, with RMSE and pair
-accuracy and each model's `p_low_*` (probability of the lowest judge total, using the week's actual
-number of judge scores). Add `--save-file` to write `S<season>W<week>_backtest.csv`. Week 1 is not supported.
+accuracy, each model's `p_low_*` (probability of the lowest judge total, using the week's actual
+number of judge scores) and `p_elim_*`, and `went_home` for the couple actually eliminated. Add `--save-file` to write `S<season>W<week>_backtest.csv`. Week 1 is not supported.
 
 ### Schedule CSV
 
