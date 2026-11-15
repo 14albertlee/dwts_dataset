@@ -1,8 +1,54 @@
-# Layer 1 Runbook: judge-score model
+# Modeling Runbook: judge scores and elimination forecast
 
 Commands only. Run from the repository root. Rationale: [MODELING_PLAN.md](./MODELING_PLAN.md);
-experiments: [LAYER1_NEXT_EXPERIMENTS.md](./LAYER1_NEXT_EXPERIMENTS.md). Settings live in
-[`config.toml`](../src/dwts_model/config.toml). Outputs go to `outputs/layer1/`.
+experiments: [LAYER1_NEXT_EXPERIMENTS.md](./LAYER1_NEXT_EXPERIMENTS.md); elimination model:
+[LAYER2_POC_PLAN.md](./LAYER2_POC_PLAN.md). Settings live in
+[`config.toml`](../src/dwts_model/config.toml). Outputs go to `outputs/layer1/` and `outputs/layer2/`.
+
+## Weekly workflow (in season)
+
+The loop to run every week. One-time setup (sections 1 and 3) must be done first; the rest of this
+document is reference.
+
+| When | Step | Commands |
+|---|---|---|
+| After an episode airs and its Wikipedia scores are up | 1. Update the data | section 2 (scrape, parse, build the database) |
+| Right after step 1 | 2. Retrain the elimination model on all data | `run_rule_check.py`, then `run_layer2.py --fit-final` |
+| Before the next episode, once theme and dances are known | 3. Write the schedule CSV, `order` left empty | `predict_upcoming.py --template`, or Claude with [PROMPT_UPCOMING_SCHEDULE.md](./PROMPT_UPCOMING_SCHEDULE.md) |
+| Same time | 4. Score pre-show | `predict_upcoming.py --schedule ...` |
+| During the episode, once the running order is announced | 5. Fill the `order` column and re-score (better estimate) | same command as step 4 |
+
+```sh
+# 1. update the data (after the episode airs)
+cd dwts_scrapy
+scrapy crawl dwts_scores -O scores.json
+cd ..
+python scripts/parse_scores_json_to_tables.py
+python scripts/build_duckdb.py
+
+# 2. retrain the elimination model on all data
+python scripts/run_rule_check.py
+python scripts/run_layer2.py --fit-final
+
+# 3. schedule for the next week (e.g. season 35 week 10); fill theme and styles, leave order empty
+python scripts/predict_upcoming.py --template prediction_files/inputs/S35W10.csv
+
+# 4. pre-show forecast -> prediction_files/outputs/S35W10_noorder.csv
+python scripts/predict_upcoming.py --schedule prediction_files/inputs/S35W10.csv --save-file
+
+# 5. order announced: fill the order column in the same CSV, re-run -> S35W10_order.csv
+python scripts/predict_upcoming.py --schedule prediction_files/inputs/S35W10.csv --save-file
+```
+
+Checks each week:
+- The printed header names the week you expect (the one after the last scored week). If it shows the
+  week that just aired, step 1 did not pick it up yet (Wikipedia not updated, or the scrape failed).
+- No `Warning: final_params.json covers data through ...` line; if it appears, step 2 was skipped.
+- Guest judge or a different panel size: add `--judges N`.
+- `p_elim` assumes exactly one couple goes home; read it with care in double-elimination or
+  no-elimination weeks, and in weeks where couples dance different numbers of times (the script prints a note).
+
+Not weekly: re-run section 3 (alpha tuning) only after a config or feature change.
 
 ## 1. Setup
 
@@ -12,7 +58,7 @@ pip install -r requirements.txt
 
 ## 2. Scrape and build the database
 
-Needed only when new episodes have aired.
+Needed only when new episodes have aired (weekly workflow step 1).
 
 ```sh
 cd dwts_scrapy
@@ -60,10 +106,10 @@ python scripts/run_layer1.py --mode holdout --confirm-holdout --models ridge --f
 
 ## 5. Score an upcoming episode
 
-The script scores the week after the last scored week of the latest season in the database, so
-re-run step 2 and the retrain below after each episode airs. The printed header shows the season and week it used.
+Reference for weekly workflow steps 2-5. The script scores the week after the last scored week of
+the latest season in the database. The printed header shows the season and week it used.
 
-### Retrain on all data (after each episode)
+### Retrain on all data (weekly workflow step 2)
 
 ```sh
 python scripts/run_rule_check.py        # rebuild the Layer 2 couple-week table and usable weeks
