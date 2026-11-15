@@ -17,10 +17,13 @@ By default it predicts the week after the last scored week of the latest season,
 model from config.toml trained on every scored week before that. Use --season/--week to
 predict a different week "as of" that point (history after it is ignored).
 
-Each couple also gets an 80% range and the probability of the lowest judge total (p_lowest, ties
-included): the model's mean plus a Gaussian spread from earlier
-seasons' out-of-sample residuals, simulated per judge and rounded to integers. Judge scores only;
-fan votes are not included. --judges N sets the panel size (default: last scored week's).
+Each couple also gets an 80% range, the probability of the lowest judge total (p_lowest, ties
+included) and the probability of elimination (p_elim). p_lowest uses the model's mean plus a
+Gaussian spread from earlier seasons' out-of-sample residuals, simulated per judge and rounded to
+integers. p_elim applies the judges-only elimination model (lower judge total goes home, weight
+rho^(k-1) for the k-th lowest) to the same draws; rho comes from `run_layer2.py --fit-final`
+(all usable weeks), refit on earlier weeks only when the target week is already in that fit.
+Fan votes are not modeled. --judges N sets the panel size (default: last scored week's).
 
 Backtest an aired week (no CSV; theme, dances and running order come from the database):
        python scripts/predict_upcoming.py --backtest --season 34 --week 6
@@ -53,6 +56,8 @@ from dwts_model.judge_distribution import (  # noqa: E402
     residual_spread,
     ridge_oos,
 )
+from dwts_model.layer2.backtest import FINAL_PARAMS_FILE, fit_final_params  # noqa: E402
+from dwts_model.layer2.baselines import lowest_judge_probs  # noqa: E402
 from dwts_model.models import RidgeModel  # noqa: E402
 from dwts_model.predict import build_upcoming_features, check_order, unrecognized_styles  # noqa: E402
 
@@ -70,18 +75,46 @@ def fit_ridge(cfg, params, model_name, history, season, week):
     return model, len(train)
 
 
-def forecast(cfg, params, model_name, history, judges, season, week, mean, n_slots, draws=N_DRAWS):
-    """Interval and P(lowest judge total) per couple, with spread from the same model's earlier-season residuals.
+def forecast(cfg, params, model_name, history, judges, season, week, mean, n_slots, rho, draws=N_DRAWS):
+    """Interval, P(lowest judge total) and P(eliminated) per couple, with spread from the same model's earlier-season residuals.
 
     `mean` is the model's (unclipped) prediction per couple. Only seasons before `season` set the spread.
+    `p_elim` applies the judges-only elimination model (`rho`) to the same simulated judge totals.
     """
     set_name = model_name.removeprefix("ridge_")
     oos = ridge_oos(history, cfg.features[set_name], params[set_name], RESID_FROM, season - 1)
     spread = residual_spread(oos, season)
-    return forecast_night(
+    fc, totals = forecast_night(
         mean, week, n_slots, spread, judge_noise_var(judges, season),
         np.random.default_rng([SEED, season, week]), n_draws=draws, score_range=(cfg.score_min, cfg.score_max),
+        return_totals=True,
     )
+    fc["p_elim"] = lowest_judge_probs(totals, rho)
+    return fc
+
+
+def elimination_rho(cfg, weekly, season, week) -> tuple[float, str]:
+    """rho of the judges-only elimination model and a description of what it was fit on.
+
+    The live forecast uses the all-data fit saved by `run_layer2.py --fit-final`. A week the saved fit
+    already covers (an as-of run or --backtest) is refit on usable weeks before it, so its own result is not used.
+    """
+    path = cfg.layer2_dir / FINAL_PARAMS_FILE
+    if not path.exists():
+        sys.exit(f"No {path}: run python scripts/run_rule_check.py, then python scripts/run_layer2.py --fit-final.")
+    final = json.loads(path.read_text())
+    if tuple(final["data_through"]) >= (season, week):
+        cw = pd.read_csv(cfg.layer2_dir / "couple_week.csv")
+        usable = pd.read_csv(cfg.layer2_dir / "usable_weeks.csv")
+        p = fit_final_params(cw, usable, before=(season, week))
+        return p["rho"], f"fit on the {p['n_weeks']} usable weeks before S{season}W{week}"
+    latest = weekly.sort_values(["season", "week"]).iloc[-1]
+    s, w = final["data_through"]
+    if (int(latest["season"]), int(latest["week"])) > (s, w):
+        print(f"Warning: {FINAL_PARAMS_FILE} covers data through S{s}W{w} but the database has "
+              f"S{int(latest['season'])}W{int(latest['week'])}; re-run run_rule_check.py and run_layer2.py --fit-final.")
+    ls, lw = final["last_usable_week"]
+    return final["rho"], f"fit on all {final['n_weeks']} usable weeks through S{ls}W{lw}"
 
 
 def panel_size(judges, season, week) -> int:
@@ -128,9 +161,11 @@ def backtest(cfg, weekly, perf, couples, judges, season, week, save_file=None) -
 
     slots = judges[(judges["season"] == season) & (judges["week"] == week)].groupby("couple_id")["judge_score"].count()
     n_slots = rows["couple_id"].map(slots).fillna(slots.median()).to_numpy()
+    rho, rho_note = elimination_rho(cfg, weekly, season, week)
     for tag, model_name, raw in (("preshow", cfg.main_model, raw_pre), ("order", cfg.order_model, raw_ord)):
-        fc = forecast(cfg, params, model_name, history, judges, season, week, raw.to_numpy(), n_slots)
+        fc = forecast(cfg, params, model_name, history, judges, season, week, raw.to_numpy(), n_slots, rho)
         rows[f"p_low_{tag}"] = fc["p_lowest"].to_numpy()
+        rows[f"p_elim_{tag}"] = fc["p_elim"].to_numpy()
         rows[f"range80_{tag}"] = [f"{lo:.1f}-{hi:.1f}" for lo, hi in zip(fc["lo"], fc["hi"])]
 
     wk = perf[(perf["season"] == season) & (perf["week"] == week)].sort_values(["round", "performance_id"])
@@ -146,17 +181,22 @@ def backtest(cfg, weekly, perf, couples, judges, season, week, save_file=None) -
     ).reset_index()
     theme = wk["theme"].dropna().iloc[0] if wk["theme"].notna().any() else "?"
     names = couples[couples["season"] == season][["couple_id", "celebrity", "professional"]]
+    went_home = weekly[(weekly["season"] == season) & (weekly["week"] == week)].set_index("couple_id")["eliminated"]
     out = rows.merge(names, on="couple_id").merge(info, on="couple_id")
+    out["went_home"] = out["couple_id"].map(went_home).fillna(False).astype(bool).map({True: "yes", False: ""})
     out = out.rename(columns={"score": "actual"}).sort_values("actual", ascending=False).reset_index(drop=True)
     out["actual_rank"] = out["actual"].rank(ascending=False, method="min").astype(int)
-    out = out[["actual_rank", "celebrity", "professional", "styles", "order", "prev_score", "actual",
-               "pred_preshow", "range80_preshow", "p_low_preshow", "pred_order", "range80_order", "p_low_order"]]
+    out = out[["actual_rank", "celebrity", "professional", "styles", "order", "prev_score", "actual", "went_home",
+               "pred_preshow", "range80_preshow", "p_low_preshow", "p_elim_preshow",
+               "pred_order", "range80_order", "p_low_order", "p_elim_order"]]
 
     pd.options.display.float_format = "{:.2f}".format
     pd.options.display.width = 220
     print(f"Backtest season {season}, week {week} ({theme}); trained on {n_train} rows before it")
     print("order = position/round size per dance; range80 = 80% range of the mean score; "
-          "p_low = P(lowest judge total, ties included), judges only")
+          "p_low = P(lowest judge total, ties included)")
+    print(f"p_elim = P(eliminated), judges-only model (lower judge total goes home, rho {rho:.2f}, {rho_note}); "
+          "fan votes not modeled; went_home = actually eliminated (withdrawals included)")
     print(out.to_string(index=False))
     scored = rows.assign(season=season, week=week)
     for label, col, name in (("pre-show", "pred_preshow", cfg.main_model), ("order", "pred_order", cfg.order_model)):
@@ -255,6 +295,7 @@ def main() -> None:
     if n_judges < 1:
         sys.exit("Could not infer the judge panel size from last week; pass --judges N.")
     n_dances = sched.set_index("couple_id")["styles"].map(len)
+    rho, rho_note = elimination_rho(cfg, weekly, season, week)
 
     def score(model_name, with_order):
         """Fit the model, score the schedule (actual order or base rates), and add the forecast columns."""
@@ -267,10 +308,12 @@ def main() -> None:
             sys.exit(f"No earlier weeks this season for {names_missing}; week-1 couples are not supported.")
         raw = model.predict(rows)
         n_slots = n_judges * rows["couple_id"].map(n_dances).to_numpy()
-        fc = forecast(cfg, params, model_name, history, judges, season, week, raw.to_numpy(), n_slots, args.draws)
+        fc = forecast(cfg, params, model_name, history, judges, season, week, raw.to_numpy(), n_slots, rho,
+                      args.draws)
         rows["predicted"] = raw.clip(cfg.score_min, cfg.score_max)
         rows["range80"] = [f"{lo:.1f}-{hi:.1f}" for lo, hi in zip(fc["lo"], fc["hi"])]
         rows["p_lowest"] = fc["p_lowest"].to_numpy()
+        rows["p_elim"] = fc["p_elim"].to_numpy()
         return rows, model, n_train
 
     pd.options.display.float_format = "{:.2f}".format
@@ -283,7 +326,7 @@ def main() -> None:
         pre, _, n_train = score(cfg.main_model, False)
         ordered, model, _ = score(cfg.order_model, True)
         model_name = cfg.order_model
-        out = ordered.merge(pre[["couple_id", "predicted", "range80", "p_lowest"]], on="couple_id",
+        out = ordered.merge(pre[["couple_id", "predicted", "range80", "p_lowest", "p_elim"]], on="couple_id",
                             suffixes=("_order", "_preshow"))
         out = out.rename(columns={"predicted_order": "pred_order", "p_lowest_order": "p_low_order",
                                   "predicted_preshow": "pred_preshow", "p_lowest_preshow": "p_low_preshow"})
@@ -294,8 +337,8 @@ def main() -> None:
         out = out.sort_values("pred_order", ascending=False).reset_index(drop=True)
         out.insert(0, "pred_rank", range(1, len(out) + 1))
         out = out[["pred_rank", "celebrity", "professional", "styles", "order", "prev_score", "running_mean",
-                   "prev_bottom3", "pred_preshow", "range80_preshow", "p_low_preshow",
-                   "pred_order", "range80_order", "p_low_order"]]
+                   "prev_bottom3", "pred_preshow", "range80_preshow", "p_low_preshow", "p_elim_preshow",
+                   "pred_order", "range80_order", "p_low_order", "p_elim_order"]]
         header = f"announced mode: pre-show {cfg.main_model} and order {cfg.order_model} (ranked by order model)"
         legend = "range80 = 80% range of the mean score; p_low = P(lowest judge total, ties included)"
     else:
@@ -304,13 +347,18 @@ def main() -> None:
         out = rows.merge(info, on="couple_id").sort_values("predicted", ascending=False).reset_index(drop=True)
         out.insert(0, "pred_rank", range(1, len(out) + 1))
         out = out[["pred_rank", "celebrity", "professional", "styles", "prev_score", "running_mean",
-                   "prev_bottom3", "predicted", "range80", "p_lowest"]]
+                   "prev_bottom3", "predicted", "range80", "p_lowest", "p_elim"]]
         header = f"base-rate mode, model {model_name}"
         legend = "range80 = 80% range of the mean score; p_lowest = P(lowest judge total, ties included)"
 
     suffix = "_order" if mode == "announced" else "_noorder"
     print(f"Season {season}, week {week} ({theme}); trained on {n_train} rows; {header}")
-    print(f"{legend}; {n_judges} judges. Judges only, fan votes not included.")
+    print(f"{legend}; {n_judges} judges.")
+    print(f"p_elim = P(eliminated), judges-only model (lower judge total goes home, rho {rho:.2f}, {rho_note}); "
+          "fan votes not modeled. Assumes exactly one couple goes home.")
+    if n_dances.nunique() > 1:
+        print("Note: couples dance different numbers of times this week; p_elim compares judge totals, "
+              "and the model was fit on even weeks only.")
     print(out.to_string(index=False))
     if args.save_file:
         # Named after the input schedule (e.g. S35W10.csv -> S35W10_order.csv)

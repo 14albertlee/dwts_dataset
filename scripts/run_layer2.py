@@ -5,8 +5,10 @@ The fan models (`null`, `m1`) are the research path; none beat the default (docs
 
     python scripts/run_layer2.py                      # default model, actual and Layer 1 judge scores
     python scripts/run_layer2.py --models lowest_judge null m1 --compare-to lowest_judge null --validate-null
+    python scripts/run_layer2.py --fit-final          # refit the default model on ALL usable weeks (for predict_upcoming)
 """
 import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -16,7 +18,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from dwts_model.config import load_config  # noqa: E402
 from dwts_model.data import load_judge_scores, load_performance_context, load_weekly_scores  # noqa: E402
-from dwts_model.layer2.backtest import DEFAULT_MODEL, MODELS, backtest, fit_season_params, params_table  # noqa: E402
+from dwts_model.layer2.backtest import (  # noqa: E402
+    DEFAULT_MODEL,
+    FINAL_PARAMS_FILE,
+    MODELS,
+    backtest,
+    fit_final_params,
+    fit_season_params,
+    params_table,
+)
 from dwts_model.layer2.judge_inputs import ActualJudgeInput, Layer1JudgeInput  # noqa: E402
 from dwts_model.layer2.metrics import bootstrap_ci, calibration, paired_ci, summarize, week_metrics  # noqa: E402
 from dwts_model.layer2.validation import null_self_consistency  # noqa: E402
@@ -34,12 +44,23 @@ def main() -> None:
                         help="reference models for paired season-bootstrap differences")
     parser.add_argument("--n-boot", type=int, default=1000)
     parser.add_argument("--config", default=None)
+    parser.add_argument("--fit-final", action="store_true",
+                        help=f"fit the default model on every usable week, save {FINAL_PARAMS_FILE} and exit")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
     tie = args.tie or cfg.tie_convention
     cw = pd.read_csv(cfg.layer2_dir / "couple_week.csv")
     usable = pd.read_csv(cfg.layer2_dir / "usable_weeks.csv")
+
+    if args.fit_final:
+        final = fit_final_params(cw, usable)
+        path = cfg.layer2_dir / FINAL_PARAMS_FILE
+        path.write_text(json.dumps(final, indent=2))
+        s, w = final["last_usable_week"]
+        print(f"{final['model']}: rho {final['rho']:.3f} fit on {final['n_weeks']} usable weeks "
+              f"(through S{s}W{w}); saved {path}")
+        return
 
     inputs = {"actual": ActualJudgeInput(cw)}
     if "layer1" in args.judge_inputs:

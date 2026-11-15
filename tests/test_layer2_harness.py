@@ -98,6 +98,26 @@ def test_lowest_judge_rho_keeps_judge_order_and_is_fitted():
     assert fit_rho(weeks)[0] == pytest.approx(0.4, abs=0.08)
 
 
+def test_final_params_as_of_ignores_target_week_and_later():
+    from dwts_model.layer2.backtest import fit_final_params
+
+    rng = np.random.default_rng(1)
+    rows = []
+    for s in (1, 2):
+        for w in range(2, 8):
+            totals = rng.permutation(6).astype(float)
+            e = int(np.argmin(totals)) if s == 1 else int(np.argmax(totals))  # season 2 contradicts season 1
+            rows += [{"season": s, "week": w, "couple_id": c, "score": t, "eliminated": c == e}
+                     for c, t in enumerate(totals)]
+    cw = pd.DataFrame(rows)
+    usable = cw[["season", "week"]].drop_duplicates()
+    full = fit_final_params(cw, usable)
+    as_of = fit_final_params(cw, usable, before=(2, 2))
+    assert (full["n_weeks"], as_of["n_weeks"]) == (12, 6)
+    assert as_of["last_usable_week"] == [1, 7] and full["data_through"] == [2, 7]
+    assert as_of["rho"] < 0.01 < full["rho"]
+
+
 def _simulate_weeks(theta, n_weeks, n_couples, seed, eps=0.0, rule=RANK):
     """Weeks whose eliminations come from the model: one feature, actual judge totals, the given rule."""
     rng = np.random.default_rng(seed)

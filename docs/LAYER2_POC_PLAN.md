@@ -80,7 +80,7 @@ The logic: fix the data and the rule first, build one evaluation harness, then c
 
 ## 7. Results (status: fan-model ladder closed, judges-only is the default forecast)
 
-Reproduce with `python scripts/run_rule_check.py` then `python scripts/run_layer2.py --models lowest_judge null m1 --compare-to lowest_judge null --validate-null`. Average tie convention; test seasons 6-35, each fit on earlier seasons only.
+Reproduce with `python scripts/run_rule_check.py` then `python scripts/run_layer2.py --models lowest_judge null m1 --compare-to lowest_judge null --validate-null`. Average tie convention; test seasons 6-35, each fit on earlier seasons only. For live forecasts, `python scripts/run_layer2.py --fit-final` refits the default model on all usable weeks (rho 0.584 on 222 weeks through S35W8); `predict_upcoming.py` reports it as `p_elim`.
 
 **Data.** 222 of 228 single-elimination weeks are usable (196 rank-rule, 26 judges' save). Dropped: 5 weeks with uneven dance counts and S17 W5 (a co-top judge scorer went home, impossible under H1). The 3 withdrawals (S9 W3, S16 W2, S31 W5) are excluded as non-votes. Test weeks: 186 with actual judge scores, 101 with Layer 1 forecast scores (Layer 1 needs seasons 17+ and a previous week for every couple).
 

@@ -112,19 +112,21 @@ def forecast_night(
     n_draws: int = 10000,
     interval: float = 0.8,
     score_range: tuple[float, float] = (1.0, 10.0),
-) -> pd.DataFrame:
+    return_totals: bool = False,
+) -> pd.DataFrame | tuple[pd.DataFrame, np.ndarray]:
     """Per-couple score interval and elimination-relevant probabilities for one night.
 
     Returns `lo` / `hi` (central `interval` range of the mean score, clipped to the score range),
     `p_lowest` (share of draws where the couple has the lowest integer total, ties counted for
     every tied couple) and `p_tied_lowest` (lowest total shared with at least one other couple).
+    With `return_totals`, also returns the simulated integer totals (draws x couples).
     """
     mean = np.asarray(mean, dtype=float)
     totals, cov = simulate_night_totals(mean, week, n_slots, spread, judge_var, rng, n_draws)
     lowest = lowest_indicator(totals)
     z = norm.ppf(0.5 + interval / 2)
     sd = np.sqrt(np.diag(cov))
-    return pd.DataFrame(
+    out = pd.DataFrame(
         {
             "lo": np.clip(mean - z * sd, *score_range),
             "hi": np.clip(mean + z * sd, *score_range),
@@ -132,3 +134,4 @@ def forecast_night(
             "p_tied_lowest": (lowest * (lowest.sum(axis=1, keepdims=True) > 1)).mean(axis=0),
         }
     )
+    return (out, totals) if return_totals else out

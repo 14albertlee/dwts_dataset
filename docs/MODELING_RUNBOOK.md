@@ -61,7 +61,19 @@ python scripts/run_layer1.py --mode holdout --confirm-holdout --models ridge --f
 ## 5. Score an upcoming episode
 
 The script scores the week after the last scored week of the latest season in the database, so
-re-run step 2 after each episode airs. The printed header shows the season and week it used.
+re-run step 2 and the retrain below after each episode airs. The printed header shows the season and week it used.
+
+### Retrain on all data (after each episode)
+
+```sh
+python scripts/run_rule_check.py        # rebuild the Layer 2 couple-week table and usable weeks
+python scripts/run_layer2.py --fit-final  # judges-only elimination model on ALL usable weeks
+```
+
+`--fit-final` saves `outputs/layer2/final_params.json` (`rho`, weeks used, `data_through`), which
+`predict_upcoming.py` reads for `p_elim`. It warns if the database has weeks the file does not cover.
+The Ridge score models need no retrain step: they are refit on every scored week before the target
+week on each run (alphas from step 3). Re-run step 3 only after a config or feature change.
 
 There are two models:
 
@@ -94,9 +106,20 @@ Besides the predicted mean score, each couple gets, from the Ridge mean plus a G
   judge, rounded to integers, and summed, so ties happen at realistic rates; every couple tied for
   lowest counts, so the column can sum to a little over 1.
 
-These are judge-score probabilities only. They are not elimination probabilities: fan votes come in
-with Layer 2 and the combination. The spread comes from the same model's out-of-sample residuals in
+These are judge-score probabilities only. The spread comes from the same model's out-of-sample residuals in
 earlier seasons, so the pre-show model's spread already includes the unknown running order.
+
+- `p_elim`: probability the couple is eliminated, from the judges-only Layer 2 model (the default; fan
+  models did not beat it, docs/LAYER2_POC_PLAN.md section 7) applied to the same simulated totals. The
+  k-th lowest judge total gets weight `rho^(k-1)` (ties share a position), normalized to sum to 1;
+  `rho` (about 0.58) is fit on real eliminations, so it accounts for fans rescuing low scorers on
+  average. Unlike `p_lowest`, the column sums to 1. It assumes exactly one couple goes home; fan
+  votes are not modeled per couple, and weeks with uneven dance counts get a note (the model was fit
+  on even weeks only).
+
+In announced mode and `--backtest` the columns are `p_low_*` and `p_elim_*` per model. For a backtest
+or an `--season/--week` run of a week already in `final_params.json`, `rho` is refit on usable weeks
+before that week, so the week's own result is never used.
 
 By default predictions are only printed. `--save-file` also writes the CSV: bare, it goes to
 `prediction_files/outputs/`; `PATH` can be another directory or a `.csv` file. The file is named
@@ -117,8 +140,8 @@ python scripts/predict_upcoming.py --backtest --season 34 --week 6
 
 Reads the theme, dances and running order from the database, trains only on weeks before it, and
 prints both models (pre-show and order-announced) next to the actual scores, with RMSE and pair
-accuracy and each model's `p_low_*` (probability of the lowest judge total, using the week's actual
-number of judge scores). Add `--save-file` to write `S<season>W<week>_backtest.csv`. Week 1 is not supported.
+accuracy, each model's `p_low_*` (probability of the lowest judge total, using the week's actual
+number of judge scores) and `p_elim_*`, and `went_home` for the couple actually eliminated. Add `--save-file` to write `S<season>W<week>_backtest.csv`. Week 1 is not supported.
 
 ### Schedule CSV
 

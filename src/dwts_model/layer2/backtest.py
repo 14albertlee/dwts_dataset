@@ -29,6 +29,33 @@ MODELS = {
     "m1": ModelSpec("m1", "fan", ("skill",)),
 }
 DEFAULT_MODEL = "lowest_judge"
+FINAL_PARAMS_FILE = "final_params.json"
+
+
+def fit_final_params(cw: pd.DataFrame, usable: pd.DataFrame, before: tuple[int, int] | None = None) -> dict:
+    """Default (judges-only) model fit on every usable week, for live forecasts.
+
+    With `before` = (season, week), only usable weeks strictly before it are used, so a past week can be
+    forecast "as of" that point. `data_through` is the last week in `cw`, used to spot stale parameters.
+    """
+    if before is not None:
+        s, w = before
+        usable = usable[(usable["season"] < s) | ((usable["season"] == s) & (usable["week"] < w))]
+    if usable.empty:
+        raise ValueError("No usable weeks to fit on.")
+    groups = cw.groupby(["season", "week"])
+    weeks = []
+    for key in zip(usable["season"], usable["week"]):
+        g = groups.get_group(key)
+        weeks.append((g["score"].to_numpy(), int(np.flatnonzero(g["eliminated"].to_numpy())[0])))
+    rho, nll = fit_rho(weeks)
+    last = usable.sort_values(["season", "week"]).iloc[-1]
+    through = cw.sort_values(["season", "week"]).iloc[-1]
+    return {
+        "model": DEFAULT_MODEL, "rho": rho, "nll": nll, "n_weeks": len(weeks),
+        "last_usable_week": [int(last["season"]), int(last["week"])],
+        "data_through": [int(through["season"]), int(through["week"])],
+    }
 
 
 @dataclass
